@@ -251,3 +251,9 @@ updateField fs rexp fn fexp =
     else
       clause [] [ vArg (proj f) ] (f ∙⟦ rexp ⟧)
     ) []
+
+toTelescope : List (Abs (Arg Type)) → Telescope
+toTelescope = map (λ where (abs n x) → (n , x))
+
+fromTelescope : Telescope → List (Abs (Arg Type))
+fromTelescope = map (λ where (n , x) → (abs n x))

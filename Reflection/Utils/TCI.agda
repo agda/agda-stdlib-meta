@@ -224,6 +224,9 @@ viewAndReduceTy ty = helper ty =<< (length ∘ proj₁ ∘ viewTy) <$> normalise
 getType' : Name → M TypeView
 getType' n = viewAndReduceTy =<< getType n
 
+getTypeDB : ℕ → M TypeView
+getTypeDB n = viewAndReduceTy =<< inferType (♯ n)
+
 getDataDef : Name → M DataDef
 getDataDef n = inDebugPath "getDataDef" do
   debugLog ("Find details for datatype: " ∷ᵈ n ∷ᵈ [])
@@ -268,11 +271,11 @@ isSort t = do
     where _ → return false
   return true
 
-isNArySort : ℕ → Term → M Bool
-isNArySort n t = do
+isNArySort : Term → M (Bool × ℕ)
+isNArySort t = do
   (tel , ty) ← viewAndReduceTy t
   b ← isSort ty
-  return (⌊ (length tel) ≟ n ⌋ ∧ b)
+  return (b , length tel)
 
 isDefT : Name → Term → M Bool
 isDefT n t = do
@@ -293,8 +296,13 @@ withSafeReset x = runAndReset $ do
       debugLog ("In term: " ∷ᵈ t ∷ᵈ [])
       error1 "Unsolved metavariables remaining in withSafeReset!"
 
--- apply a list of terms to a name, picking the correct constructor & visibility
+-- apply a list of terms to a name, picking the correct constructor of the term datatype & visibility
 applyWithVisibility : Name → List Term → M Term
 applyWithVisibility n l = do
   (argTys , _) ← getType' n
   nameConstr n (zipWith (λ where (abs _ (arg i _)) → arg i) argTys l)
+
+applyWithVisibilityDB : ℕ → List Term → M Term
+applyWithVisibilityDB n l = do
+  (argTys , _) ← getTypeDB n
+  return $ var n (zipWith (λ where (abs _ (arg i _)) → arg i) argTys l)

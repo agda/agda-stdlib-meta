@@ -18,6 +18,7 @@ open SortingAlgorithm ≤-decTotalOrder (mergeSort ≤-decTotalOrder) public
 open import Reflection.Utils
 open import Reflection.Utils.TCI
 
+open import Class.Show
 open import Class.DecEq
 open import Class.Functor
 open import Class.MonadError.Instances
@@ -33,6 +34,8 @@ import Class.Monad
 private variable
   a b : Level
   A : Set a
+
+open import Data.String as S using (parens)
 
 record ClauseBuilder (M : Set → Set) : Set₁ where
   field
@@ -241,7 +244,7 @@ module _ {M : ∀ {a} → Set a → Set a} ⦃ _ : Monad M ⦄ ⦃ me : MonadErr
 
   -- if the goal is of type (a : A) → B, return the type of the branch of pattern p and new context
   specializeType : SinglePattern → Type → M (Type × Telescope)
-  specializeType p@(t , arg i p') goalTy = markDontFail "specializeType" $ inDebugPath "specializeType" $ runAndReset do
+  specializeType p@(t , arg i p') goalTy = inDebugPath "specializeType" $ runAndReset do
     debugLog ("Goal type to specialize: " ∷ᵈ goalTy ∷ᵈ [])
     cls@((Clause.clause tel _ _) ∷ _) ← return $ clauseExprToClauses $ MatchExpr $
         (p , inj₂ (just unknown)) ∷
@@ -261,7 +264,7 @@ module _ {M : ∀ {a} → Set a → Set a} ⦃ _ : Monad M ⦄ ⦃ me : MonadErr
     return (goalTy' , newCtx)
 
   ContextMonad-MonadTC : ContextMonad M
-  ContextMonad-MonadTC .introPatternM pat x = do
+  ContextMonad-MonadTC .introPatternM pat@(_ , arg _ p) x = do
     goalTy ← goalTy
     (newGoalTy , newContext) ← specializeType pat goalTy
     extendContext' newContext (runWithGoalTy newGoalTy x)
