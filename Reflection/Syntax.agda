@@ -103,6 +103,8 @@ pattern _◇ n = Pattern.con n []
 pattern _◇⟦_⟧ n x = Pattern.con n (vArg x ∷ [])
 pattern _◇⟦_∣_⟧ n x y = Pattern.con n (vArg x ∷ vArg y ∷ [])
 
+pattern `Set = agda-sort (set (quote 0ℓ ∙))
+
 -- ** useful type aliases
 PatTelescope = Telescope
 Context      = Args Type
