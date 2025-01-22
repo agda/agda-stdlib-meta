@@ -42,8 +42,10 @@ Need to generate:
   - the COMPILE pragma binding them together
 -}
 
--- TODO: somewhere else
-`Set = agda-sort (Sort.set (quote 0ℓ ∙))
+-- TODO: This breaks with:
+-- - mutual data types
+-- - parametrised data types
+-- - maybe more
 
 -- * Controlling the names of the generated types
 
@@ -233,20 +235,35 @@ private
   renderHsType (def (quote Pair) (_ ∷ _ ∷ vArg a ∷ vArg b ∷ [])) = printf "(%s, %s)" (renderHsType a) (renderHsType b)
   renderHsType (def d []) = renderHsTypeName d
   renderHsType (def d vs) = printf "(%s %s)" (renderHsTypeName d) (joinStrings " " (renderHsArgs vs))
+  renderHsType (vΠ[ s ∶ a ] x) = printf "(%s -> %s)" (renderHsType a) (renderHsType x)
   renderHsType t = printf "(TODO: renderHsType %s)" (show t)
 
   renderHsArgs [] = []
   renderHsArgs (vArg a ∷ as) = renderHsType a ∷ renderHsArgs as
   renderHsArgs (_ ∷ as) = renderHsArgs as
 
+  canDeriveInstancesT : Term → Bool
+  canDeriveInstancesA : List (Arg Term) → Bool
+
+  canDeriveInstancesT (def d vs) = canDeriveInstancesA vs
+  canDeriveInstancesT (vΠ[ s ∶ a ] x) = false
+  canDeriveInstancesT t = false
+
+  canDeriveInstancesA [] = true
+  canDeriveInstancesA (vArg a ∷ as) = canDeriveInstancesT a ∧ canDeriveInstancesA as
+  canDeriveInstancesA (_ ∷ as) = canDeriveInstancesA as
+
   foreignPragma : Name → List Name → TC String
   foreignPragma d cs = do
-    cons ← forM cs λ c → do
+    cons' ← forM cs λ c → do
             tel , _ ← viewTy <$> getType c
             let args = map unAbs tel
-            pure $ printf "%s %s" (showName c) (joinStrings " " $ renderHsArgs args)
-    pure $ printf "data %s = %s\n  deriving (Show, Eq, Generic)"
+            pure (  printf "%s %s" (showName c) (joinStrings " " $ renderHsArgs args)
+                 ,′ canDeriveInstancesA args )
+    let (cons , bs) = unzip cons'
+    pure $ printf "data %s = %s\n  deriving (%sGeneric)"
                   (showName d) (joinStrings " | " cons)
+                  (if foldl _∧_ true bs then "Show, Eq, " else "" )
 
   -- Record types
   foreignPragmaRec : NameEnv → Name → List Name → List Name → TC String
@@ -257,8 +274,9 @@ private
     let args = map unAbs tel
         renderField f ty = printf "%s :: %s" f (renderHsType $ unArg ty)
         con = printf "%s {%s}" (showName c) (joinStrings ", " $ zipWith renderField fNames args)
-    pure $ printf "data %s = %s\n  deriving (Show, Eq, Generic)"
+    pure $ printf "data %s = %s\n  deriving (%sGeneric)"
                   (showName d) con
+                  (if canDeriveInstancesA args then "Show, Eq, " else "")
 
   hsImports : String
   hsImports = "import GHC.Generics (Generic)"
