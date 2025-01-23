@@ -5,7 +5,7 @@ open import Meta.Prelude hiding (lookup)
 
 open import Agda.Builtin.Reflection using
   (declareData; defineData; pragmaForeign; pragmaCompile; solveInstanceConstraints)
-open import Reflection as R hiding (showName; _>>=_; _>>_)
+open import Reflection as R hiding (showName; _>>=_; _>>_; _≟_)
 open import Reflection.AST.DeBruijn
 
 open import Data.Maybe using (fromMaybe; maybe′; _<∣>_)
@@ -14,6 +14,7 @@ open import Data.String using () renaming (_++_ to _&_)
 import Data.String as String
 open import Data.List using (map; zip; zipWith)
 open import Data.Char using (toUpper; toLower)
+open import Relation.Nullary.Decidable using (¬?)
 
 open import Function
 open import Text.Printf
@@ -222,11 +223,15 @@ private
   joinStrings : String → List String → String
   joinStrings sep ss = foldr _&_ "" $ intersperse sep ss
 
+  removeUnderscore : String → String
+  removeUnderscore s = joinStrings "." $ filter (¬? ∘ ("_" ≟_))
+                        $ map String.fromList $ wordsBy ('.' ≟_) $ String.toList s
+
   compilePragma : Name → List Name → String
   compilePragma d cs = printf "= data %s (%s)" (showName d) (joinStrings " | " (map showName cs))
 
   renderHsTypeName : Name → String
-  renderHsTypeName d = fromMaybe ("MAlonzo.Code." String.++ R.showName d) (lookup d specialHsTypes)
+  renderHsTypeName d = fromMaybe ("MAlonzo.Code." String.++ removeUnderscore (R.showName d)) (lookup d specialHsTypes)
 
   renderHsType : Term → String
   renderHsArgs : List (Arg Term) → List String
