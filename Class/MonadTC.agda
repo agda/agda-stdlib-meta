@@ -12,6 +12,8 @@ open import Reflection.Syntax
 
 open import Reflection.Debug
 
+open import Class.Show
+open import Class.DecEq
 open import Class.MonadReader
 open import Class.MonadError
 open import Class.Functor
@@ -135,11 +137,80 @@ record MonadTC (M : ∀ {f} → Set f → Set f)
       where _ → error ("Not a record!" ∷ᵈ [])
     return $ con c args
 
+  isSolvedMeta : Term → M Bool
+  isSolvedMeta m@(meta x args) = do
+    r@(meta y _) ← reduce m
+      where _ → return true
+    return (x ≠ y)
+  isSolvedMeta _ = error ("Not a meta!" ∷ᵈ [])
+
+  hasUnsolvedMetas : Term → M Bool
+  hasUnsolvedMetas' : List (Arg Term) → M Bool
+  hasUnsolvedMetasCl : List Clause → M Bool
+  hasUnsolvedMetasTel : Telescope → M Bool
+
+  hasUnsolvedMetas (var x args) = hasUnsolvedMetas' args
+  hasUnsolvedMetas (con c args) = hasUnsolvedMetas' args
+  hasUnsolvedMetas (def f args) = hasUnsolvedMetas' args
+  hasUnsolvedMetas (lam v (abs _ t)) = hasUnsolvedMetas t
+  hasUnsolvedMetas (pat-lam cs args) = do
+    a ← hasUnsolvedMetasCl cs
+    b ← hasUnsolvedMetas' args
+    return (a ∨ b)
+  hasUnsolvedMetas (pi (arg _ a) (abs _ b)) = do
+    a ← hasUnsolvedMetas a
+    b ← hasUnsolvedMetas b
+    return (a ∨ b)
+  hasUnsolvedMetas (sort (set t)) = hasUnsolvedMetas t
+  hasUnsolvedMetas (sort (prop t)) = hasUnsolvedMetas t
+  hasUnsolvedMetas (sort unknown) = return true
+  hasUnsolvedMetas (sort _) = return false
+  hasUnsolvedMetas (lit l) = return false
+  hasUnsolvedMetas m@(meta x x₁) = not <$> isSolvedMeta m
+  hasUnsolvedMetas unknown = return false
+
+  hasUnsolvedMetas' [] = return false
+  hasUnsolvedMetas' ((arg _ x) ∷ l) = do
+    a ← hasUnsolvedMetas x
+    b ← hasUnsolvedMetas' l
+    return (a ∨ b)
+
+  hasUnsolvedMetasCl [] = return false
+  hasUnsolvedMetasCl (clause tel _ t ∷ cl) = do
+    a ← hasUnsolvedMetas t
+    b ← hasUnsolvedMetasTel tel
+    c ← hasUnsolvedMetasCl cl
+    return (a ∨ b ∨ c)
+  hasUnsolvedMetasCl (absurd-clause tel _ ∷ cl) = do
+    a ← hasUnsolvedMetasTel tel
+    b ← hasUnsolvedMetasCl cl
+    return (a ∨ b)
+
+  hasUnsolvedMetasTel [] = return false
+  hasUnsolvedMetasTel ((_ , arg _ x) ∷ tel) = do
+    a ← hasUnsolvedMetas x
+    b ← hasUnsolvedMetasTel tel
+    return (a ∨ b)
+
   -- this allows mutual recursion
   declareAndDefineFuns : List (Arg Name × Type × List Clause) → M ⊤
   declareAndDefineFuns ds = do
     traverse (λ (n , t , _) → declareDef n t) ds
     traverse (λ where (arg _ n , _ , cs) → defineFun n cs) ds
+    return _
+
+  declareAndDefineFunsDebug : List (Arg Name × Type × List Clause) → M ⊤
+  declareAndDefineFunsDebug ds = do
+    traverse (λ (n , t , _) → declareDef n t) ds
+    traverse (λ where (arg _ n , _ , _) → do
+      b ← getType n >>= hasUnsolvedMetas
+      if b then error [ strErr $ show n ] else return tt) ds
+    traverse (λ where (arg _ n , _ , cs) → defineFun n cs) ds
+    traverse (λ where (arg _ n , _ , _) → do
+      d@(function cs) ← getDefinition n
+        where _ → error [ strErr "Weird bug" ]
+      b ← hasUnsolvedMetasCl cs
+      if b then error [ strErr $ show d ] else return tt) ds
     return _
 
   declareAndDefineFun : Arg Name → Type → List Clause → M ⊤

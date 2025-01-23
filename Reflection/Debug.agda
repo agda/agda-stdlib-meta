@@ -33,6 +33,9 @@ instance
   IsErrorPart-Name : IsErrorPart Name
   IsErrorPart-Name .toErrorPart = ErrorPart.nameErr
 
+  IsErrorPart-Pattern : IsErrorPart Pattern
+  IsErrorPart-Pattern .toErrorPart = ErrorPart.pattErr
+
   IsErrorPart-Clause : IsErrorPart Clause
   IsErrorPart-Clause .toErrorPart c = ErrorPart.termErr (pat-lam [ c ] [])
 

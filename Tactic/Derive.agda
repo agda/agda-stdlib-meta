@@ -34,39 +34,56 @@ open import Relation.Nullary.Decidable
 open import Tactic.ClauseBuilder
 
 open import Class.DecEq
-open import Class.Monad
-open import Class.Traversable
 open import Class.Functor
+open import Class.Monad
 open import Class.MonadReader.Instances
 open import Class.MonadTC.Instances
+open import Class.Show
+open import Class.Traversable
 
 instance
   _ = ContextMonad-MonadTC
   _ = Functor-M
+  _ = Show-List
 
 open ClauseExprM
 
+-- generate the type of the `className dName` instance
 genClassType : ℕ → Name → Maybe Name → TC Type
 genClassType arity dName wName = do
   params ← getParamsAndIndices dName
-  adjParams ← adjustParams $ take (length params ∸ arity) params
+  let params' = L.map (λ where (abs x y) → abs x (hide y)) $ take (length params ∸ arity) params
+  sorts ← collectRelevantSorts params'
+  debugLog1 ("Generate required instances at indices: " S.++ show (L.map proj₁ sorts))
+  let adjustedDBs = L.zipWith (λ (i , tel) a → (i + a , tel)) sorts (upTo (length sorts))
+  adjustedDBs' ← extendContext' (toTelescope params) $ genSortInstanceWithCtx adjustedDBs
+  let adjParams = params' ++ adjustedDBs'
   debugLog1 "AdjustedParams: "
-  logTelescope (L.map ((λ where (abs s x) → just s , x) ∘ proj₁) adjParams)
-  ty ← applyWithVisibility dName (L.map ♯ (trueIndices adjParams))
-  return $ modifyClassType wName (L.map proj₁ adjParams , ty)
+  logTelescope (L.map ((λ where (abs s x) → just s , x)) adjParams)
+  ty ← applyWithVisibility dName (L.map (♯ ∘ (_+ length sorts)) (downFrom (length params)))
+  return $ modifyClassType wName (adjParams , ty)
   where
-    adjustParams : List (Abs (Arg Type)) → TC (List ((Abs (Arg Type)) × Bool))
-    adjustParams [] = return []
-    adjustParams (abs x (arg _ t) ∷ l) = do
-      a ← (if_then [ (abs "_" (iArg (className ∙⟦ ♯ 0 ⟧)) , false) ] else []) <$> isNArySort arity t
-      ps ← extendContext (x , hArg t) (adjustParams l)
-      let ps' = flip L.map ps λ where
-        (abs s (arg i t) , b) → (abs s (arg i (mapVars (_+ (if b then length a else 0)) t)) , b)
-      return (((abs x (hArg t) , true) ∷ a) ++ ps')
+    -- returns list of DB indices (at the end) and telescope of argument types
+    collectRelevantSorts : List (Abs (Arg Type)) → TC (List (ℕ × ℕ))
+    collectRelevantSorts [] = return []
+    collectRelevantSorts (abs x (arg _ t) ∷ l) = do
+      rec ← extendContext (x , hArg t) $ collectRelevantSorts l
+      (b , k) ← isNArySort t
+      return (if b then (length l , k) ∷ rec else rec)
 
-    trueIndices : {A : Set} → List (A × Bool) → List ℕ
-    trueIndices [] = []
-    trueIndices (x ∷ l) = if proj₂ x then length l ∷ trueIndices l else trueIndices l
+    genSortInstance : ℕ → ℕ → ℕ → TC Term
+    genSortInstance k 0 i       = do
+      res ← applyWithVisibilityDB (i + k) (L.map ♯ $ downFrom k)
+      return $ className ∙⟦ res ⟧
+    genSortInstance k (suc a) i = do
+      res ← extendContext ("" , hArg unknown) $ genSortInstance k a i
+      return $ pi (hArg unknown) $ abs "_" res
+
+    genSortInstanceWithCtx : List (ℕ × ℕ) → TC (List (Abs (Arg Term)))
+    genSortInstanceWithCtx [] = return []
+    genSortInstanceWithCtx ((i , k) ∷ xs) = do
+      x' ← (abs "_" ∘ iArg) <$> (genSortInstance k k i)
+      (x' ∷_) <$> (extendContext ("", hArg unknown) $ genSortInstanceWithCtx xs)
 
     modifyClassType : Maybe Name → TypeView → Type
     modifyClassType nothing  (tel , ty) = tyView (tel , className ∙⟦ ty ⟧)
@@ -115,7 +132,7 @@ module _ (arity : ℕ) (genCe : (Name → Maybe Name) → List SinglePattern →
 
   derive-Class : ⦃ TCOptions ⦄ → List (Name × Name) → UnquoteDecl
   derive-Class l = initUnquoteWithGoal (className ∙) $
-    declareAndDefineFuns =<< concat <$> traverse ⦃ Functor-List ⦄ helper l
+    declareAndDefineFuns =<< runAndReset (concat <$> traverse ⦃ Functor-List ⦄ helper l)
     where
       helper : Name × Name → TC (List (Arg Name × Type × List Clause))
       helper (a , b) = do hs ← genMutualHelpers a ; deriveMulti (a , b , hs)

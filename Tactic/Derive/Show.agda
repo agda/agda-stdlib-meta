@@ -70,11 +70,14 @@ private
   open import Tactic.Derive.TestTypes
   import Data.Nat.Show
   open import Tactic.Defaults
+  open import Data.List.Relation.Binary.Pointwise.Base
 
   unquoteDecl Show-Bool Show-ℤ Show-List Show-Maybe Show-ℕ Show-Sign Show-⊤ = derive-Show ((quote Bool , Show-Bool) ∷ (quote ℤ , Show-ℤ) ∷ (quote List , Show-List) ∷ (quote Maybe , Show-Maybe) ∷ (quote ℕ , Show-ℕ) ∷ (quote Sign , Show-Sign) ∷ (quote ⊤ , Show-⊤) ∷ [])
 
   unquoteDecl Show-Fin = derive-Show [ (quote Fin , Show-Fin) ]
   unquoteDecl Show-Vec = derive-Show [ (quote Vec , Show-Vec) ]
+
+  unquoteDecl Show-Pointwise = derive-Show [ (quote Pointwise , Show-Pointwise) ]
 
   unquoteDecl Show-These = derive-Show [ (quote These , Show-These) ]
   unquoteDecl Show-⊎ = derive-Show [ (quote _⊎_ , Show-⊎) ]

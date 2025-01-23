@@ -21,15 +21,6 @@ open import Reflection.Utils.TCI
 instance
   _ = Functor-M
 
-solve : ⦃ TCOptions ⦄ → Term → Tactic
-solve t = initTac $ runSpeculative $ do
-  inj₁ goal ← reader TCEnv.goal
-    where _ → error1 "solve: Goal is not a term!"
-  metas ← findMetas <$> checkType t goal
-  if null metas
-    then (_, true)  <$> unify goal t
-    else (_, false) <$> error1 "Unsolved metavariables remaining!"
-
 assumption' : ITactic
 assumption' = inDebugPath "assumption" do
   c ← getContext
