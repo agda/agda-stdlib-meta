@@ -5,7 +5,7 @@ open import Meta.Init hiding (TC; Monad-TC; MonadError-TC)
 open import Level using (Level; 0ℓ)
 open import Agda.Builtin.Reflection using (declareData; defineData; pragmaForeign; pragmaCompile;
                                            solveInstanceConstraints)
-open import Reflection as R hiding (showName; _>>=_; _>>_)
+open import Reflection as R hiding (showName; _>>=_; _>>_ ; _≟_)
 open import Reflection.AST hiding (showName)
 open import Reflection.AST.DeBruijn
 open import Data.Maybe using (Maybe; nothing; just; fromMaybe; maybe′; _<∣>_)
@@ -15,13 +15,14 @@ open import Data.Sum using (_⊎_; inj₁; inj₂)
 open import Data.String using (String) renaming (_++_ to _&_)
 open import Data.Product hiding (map; zip; zipWith)
 import Data.String as String
-open import Data.Bool
-open import Data.Nat
+open import Data.Bool hiding (_≟_)
+open import Data.Nat hiding (_≟_)
 open import Data.List hiding (lookup; fromMaybe)
 open import Data.Char using (toUpper; toLower)
 open import Foreign.Haskell
 open import Function
 open import Text.Printf
+open import Relation.Nullary.Decidable using (¬?)
 
 open import Class.DecEq
 open import Class.Functor
@@ -232,11 +233,15 @@ private
   joinStrings : String → List String → String
   joinStrings sep ss = foldr _&_ "" $ intersperse sep ss
 
+  removeUnderscore : String → String
+  removeUnderscore s = joinStrings "." $ filter (¬? ∘ ("_" ≟_))
+                        $ map String.fromList $ wordsBy ('.' ≟_) $ String.toList s
+
   compilePragma : Name → List Name → String
   compilePragma d cs = printf "= data %s (%s)" (showName d) (joinStrings " | " (map showName cs))
 
   renderHsTypeName : Name → String
-  renderHsTypeName d = fromMaybe ("MAlonzo.Code." String.++ R.showName d) (lookup d specialHsTypes)
+  renderHsTypeName d = fromMaybe ("MAlonzo.Code." String.++ removeUnderscore (R.showName d)) (lookup d specialHsTypes)
 
   renderHsType : Term → String
   renderHsArgs : List (Arg Term) → List String
