@@ -17,3 +17,5 @@ open import Tactic.ReduceDec public
 
 open import Tactic.Derive.DecEq public
 open import Tactic.Derive.Show public
+open import Tactic.Derive.Convertible
+open import Tactic.Derive.HsType
