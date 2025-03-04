@@ -17,10 +17,6 @@ open import Class.Functor
 open import Class.Monad
 open import Class.Traversable
 
-private variable
-  ℓ : Level
-  A : Set ℓ
-
 error : String → TC A
 error s = typeError [ strErr s ]
 

@@ -21,11 +21,6 @@ open import Class.DecEq
 open import Class.Functor
 open import Class.Traversable
 
-private variable
-  a b : Level
-  A : Set a
-  B : Set b
-
 instance _ = Functor-M
 
 fresh-level : M Level

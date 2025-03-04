@@ -21,10 +21,6 @@ open import Class.MonadError.Instances
 open import Class.MonadReader.Instances
 open import Class.MonadTC.Instances
 
-private
-  variable ℓ : Level
-           A : Set ℓ
-
 -- find all subterms satisfying the predicate (not under binders)
 selectSubterms : (Term → Bool) → Term → List Term
 selectSubterms P t = if P t then [ t ] else helper t

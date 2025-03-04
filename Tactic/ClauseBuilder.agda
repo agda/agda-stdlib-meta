@@ -31,12 +31,6 @@ module _ where
 
 import Class.Monad
 
-private variable
-  a b : Level
-  A : Set a
-
-open import Data.String as S using (parens)
-
 record ClauseBuilder (M : Set → Set) : Set₁ where
   field
     Base : Set → Set

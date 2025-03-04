@@ -20,10 +20,6 @@ open import Class.Functor
 open import Class.Monad
 open import Class.Traversable
 
-private variable
-  a f : Level
-  A B : Set f
-
 data ReductionOptions : Set where
   onlyReduce : List Name → ReductionOptions
   dontReduce : List Name → ReductionOptions
@@ -73,7 +69,7 @@ record MonadTC (M : ∀ {f} → Set f → Set f)
                ⦃ m : Monad M ⦄ ⦃ me : MonadError (List ErrorPart) M ⦄ : Setω₁ where
   field
     unify            : Term → Term → M ⊤
-    typeError        : ∀ {A : Set f} → List ErrorPart → M A
+    typeError        : List ErrorPart → M A
     inferType        : Term → M Type
     checkType        : Term → Type → M Term
     normalise        : Term → M Term
@@ -227,7 +223,7 @@ module _ {M : ∀ {f} → Set f → Set f}
   open MonadTC mtc
   open MonadReader mre
 
-  record IsMErrorPart (A : Set a) : Setω where
+  record IsMErrorPart (A : Set ℓ) : Setω where
     field toMErrorPart : A → M (List ErrorPart)
 
   open IsMErrorPart ⦃...⦄ public
