@@ -1,27 +1,24 @@
 module Tactic.Derive.HsType where
 
 open import Meta.Init hiding (TC; Monad-TC; MonadError-TC)
+open import Meta.Prelude hiding (lookup)
 
-open import Level using (Level; 0ℓ)
-open import Agda.Builtin.Reflection using (declareData; defineData; pragmaForeign; pragmaCompile;
-                                           solveInstanceConstraints)
+open import Agda.Builtin.Reflection using
+  (declareData; defineData; pragmaForeign; pragmaCompile; solveInstanceConstraints)
 open import Reflection as R hiding (showName; _>>=_; _>>_)
-open import Reflection.AST hiding (showName)
 open import Reflection.AST.DeBruijn
-open import Data.Maybe using (Maybe; nothing; just; fromMaybe; maybe′; _<∣>_)
-open import Data.Unit using (⊤; tt)
+
+open import Data.Maybe using (fromMaybe; maybe′; _<∣>_)
 open import Data.Integer.Base using (ℤ)
-open import Data.Sum using (_⊎_; inj₁; inj₂)
-open import Data.String using (String) renaming (_++_ to _&_)
-open import Data.Product hiding (map; zip; zipWith)
+open import Data.String using () renaming (_++_ to _&_)
 import Data.String as String
-open import Data.Bool
-open import Data.Nat
-open import Data.List hiding (lookup; fromMaybe)
+open import Data.List using (map; zip; zipWith)
 open import Data.Char using (toUpper; toLower)
-open import Foreign.Haskell
+
 open import Function
 open import Text.Printf
+open import Foreign.Haskell
+open import Foreign.Haskell.Pair using (Pair)
 
 open import Class.DecEq
 open import Class.Functor
@@ -35,7 +32,7 @@ open import Tactic.Derive.Show using (showName)
 
 open import Reflection.Utils
 open import Reflection.Utils.TCI
-open import Foreign.Haskell.Pair using (Pair)
+
 open import Class.HasHsType
 
 {-
@@ -44,10 +41,6 @@ Need to generate:
   - the corresponding Haskell type (in a FOREIGN pragma)
   - the COMPILE pragma binding them together
 -}
-
-private variable
-  l : Level
-  A B : Set l
 
 -- TODO: somewhere else
 `Set = agda-sort (Sort.set (quote 0ℓ ∙))

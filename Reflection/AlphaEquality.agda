@@ -15,11 +15,6 @@ open import Relation.Binary            using (DecidableEquality)
 
 open import Class.DecEq
 
-private
-  variable
-    a : Level
-    A : Set a
-
 ------------------------------------------------------------------------
 -- Definition
 
