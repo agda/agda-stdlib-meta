@@ -13,11 +13,6 @@ open import Relation.Nullary.Decidable using (⌊_⌋)
 
 open import Reflection
 
-private
-  variable
-    a : Level
-    A : Set a
-
 record IsErrorPart (A : Set) : Set where
   field toErrorPart : A → ErrorPart
 

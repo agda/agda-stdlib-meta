@@ -1,52 +1,31 @@
 module Tactic.Derive.Convertible where
 
-open import Level
 open import Meta.Prelude
 open import Meta.Init
 
 import Data.List as L
-import Data.List.NonEmpty as NE
-import Data.String as S
-import Data.Product as P
-
-open import Relation.Nullary
-open import Relation.Nullary.Decidable
 
 open import Reflection.Tactic
-open import Reflection.AST.Term
 open import Reflection.AST.DeBruijn
 import Reflection.TCM as R
 open import Reflection.Utils
 open import Reflection.Utils.TCI
-import Function.Identity.Effectful as Identity
 
-open import Class.DecEq
 open import Class.DecEq
 open import Class.Functor
+open import Class.Bifunctor
 open import Class.Monad
 open import Class.MonadTC.Instances
-open import Class.Traversable
-open import Class.Show
 open import Class.MonadReader
 
-open import Reflection.Utils.Substitute
 open import Class.Convertible
 open import Class.HasHsType
 open import Tactic.Derive.HsType
 
-private instance
-  _ = Functor-M {TC}
-
--- TODO: move to agda-stdlib-meta
-liftTC : ∀ {a} {A : Set a} → R.TC A → TC A
-liftTC m _ = m
-
 private
+  instance _ = Functor-M {TC}
 
   open MonadReader ⦃...⦄
-
-  variable
-    A B C : Set
 
   TyViewTel = List (Abs (Arg Type))
 
@@ -58,7 +37,7 @@ private
   -- Substitute leading level parameters with lzero
   smashLevels : TyViewTel → ℕ × TyViewTel
   smashLevels (abs s (arg i (def (quote Level) [])) ∷ tel) =
-    P.map ℕ.suc (substTel 0 (quote 0ℓ ∙)) $ smashLevels tel
+    bimap ℕ.suc (substTel 0 (quote 0ℓ ∙)) $ smashLevels tel
   smashLevels tel = (0 , tel)
 
   tyViewToTel : TyViewTel → Telescope

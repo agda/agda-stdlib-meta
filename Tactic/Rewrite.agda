@@ -23,8 +23,6 @@ open import Class.Show
 
 open Debug ("rewrite" , 100)
 
-private variable ℓ : Level; A : Set ℓ
-
 viewEq : Term → TC (Term × Term)
 viewEq eq = do
   (def (quote _≡_) (_ ∷ _ ∷ vArg x ∷ vArg y ∷ [])) ← inferType eq

@@ -8,8 +8,6 @@ open import Class.Monad
 open import Class.Functor
 open import Class.MonadError
 
-private variable ℓ : Level
-
 open MonadError ⦃...⦄
 
 record MonadReader (R : Set ℓ) (M : ∀ {a} → Set a → Set a) ⦃ _ : Monad M ⦄ : Setω where

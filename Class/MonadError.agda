@@ -9,10 +9,7 @@ open import Reflection using (TC; ErrorPart; typeError; catchTC; strErr)
 
 module Class.MonadError where
 
-private
-  variable
-    e f : Level
-    A : Set f
+private variable e f : Level
 
 record MonadError (E : Set e) (M : ∀ {f} → Set f → Set f) : Setω where
   field

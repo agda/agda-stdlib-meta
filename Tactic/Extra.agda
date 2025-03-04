@@ -222,7 +222,7 @@ genTestMatch f n = do
   defineFun f [ ⟦⇒ t ⟧ ]
 
 private
-  variable A : Set; n : ℕ
+  variable n : ℕ
   data Xˡ : Set → Set₁ where
     [1] : Xˡ String
     [2] : Xˡ A → Xˡ (Vec A n)

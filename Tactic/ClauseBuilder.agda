@@ -30,10 +30,6 @@ module _ where
 
 import Class.Monad
 
-private variable
-  a b : Level
-  A : Set a
-
 record ClauseBuilder (M : Set → Set) : Set₁ where
   field
     Base : Set → Set

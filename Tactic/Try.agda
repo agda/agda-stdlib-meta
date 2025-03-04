@@ -45,9 +45,6 @@ nodup : List Term → List Term
 nodup = nubBy show
 
 private
-  variable
-    A B : Set
-
   doN : {{_ : DecEq A}} → ℕ → (A → TC A) → (A → TC A)
   doN 0       _ x = return x
   doN (suc n) f x = do

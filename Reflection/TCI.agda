@@ -20,10 +20,7 @@ open import Class.MonadTC
 
 open Monad
 
-private variable a f : Level
-                 A B C D : Set a
-
-TC : Set a → Set a
+TC : Set ℓ → Set ℓ
 TC = ReaderT TCEnv R.TC
 
 Monad-TC : Monad TC
@@ -54,18 +51,17 @@ applyExtContext : Telescope → R.TC A → R.TC A
 applyExtContext [] x       = x
 applyExtContext (t ∷ ts) x = applyExtContext ts $ (uncurry R.extendContext) t x
 
-private
-  liftTC : R.TC A → TC A
-  liftTC x = λ r → applyExtContext (r .TCEnv.localContext) x
+liftTC : R.TC A → TC A
+liftTC x = λ r → applyExtContext (r .TCEnv.localContext) x
 
-  liftTC1 : (A → R.TC B) → A → TC B
-  liftTC1 f a = liftTC (f a)
+liftTC1 : (A → R.TC B) → A → TC B
+liftTC1 f a = liftTC (f a)
 
-  liftTC2 : (A → B → R.TC C) → A → B → TC C
-  liftTC2 f a b = liftTC (f a b)
+liftTC2 : (A → B → R.TC C) → A → B → TC C
+liftTC2 f a b = liftTC (f a b)
 
-  liftTC3 : (A → B → C → R.TC D) → A → B → C → TC D
-  liftTC3 f a b c = liftTC (f a b c)
+liftTC3 : (A → B → C → R.TC D) → A → B → C → TC D
+liftTC3 f a b c = liftTC (f a b c)
 
 module MonadTCI where
   unify             : Term → Term → TC ⊤

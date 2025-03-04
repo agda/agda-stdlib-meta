@@ -13,10 +13,6 @@ open import Meta.Init
 
 open MonadTC ⦃...⦄
 
-private variable
-  a : Level
-  A : Set a
-
 Tactic = Term → R.TC ⊤
 UnquoteDecl = R.TC ⊤
 
