@@ -1,5 +1,5 @@
 <!DOCTYPE HTML>
-<html><head><meta charset="utf-8"><title>standard-library-meta</title><link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css'/><style>.github-fork-ribbon:before { background-color: #333; }</style><link rel="stylesheet" href="css/Agda.css"></head><body><a class='github-fork-ribbon'href='https://github.com/agda/agda-stdlib-meta/tree/master/'data-ribbon='Source code on Github' title='Source code on Github'>Source code on Github</a><pre class="Agda"><a id="1" class="Keyword">module</a> <a id="8" href="standard-library-meta.html" class="Module">standard-library-meta</a> <a id="30" class="Keyword">where</a>
+<html><head><meta charset="utf-8"><title>standard-library-meta</title><link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css'/><style>.github-fork-ribbon:before { background-color: #333; }</style><link rel="stylesheet" href="css/Agda.css"></head><body><a class='github-fork-ribbon'href='https://github.com/agda/agda-stdlib-meta/tree/upstream-convertible-hstype/'data-ribbon='Source code on Github' title='Source code on Github'>Source code on Github</a><pre class="Agda"><a id="1" class="Keyword">module</a> <a id="8" href="standard-library-meta.html" class="Module">standard-library-meta</a> <a id="30" class="Keyword">where</a>
 
 <a id="37" class="Keyword">open</a> <a id="42" class="Keyword">import</a> <a id="49" href="Algebra.Function.html" class="Module">Algebra.Function</a>
 
@@ -7,16 +7,19 @@
 <a id="97" class="Keyword">open</a> <a id="102" class="Keyword">import</a> <a id="109" href="Class.MonadError.html" class="Module">Class.MonadError</a>
 <a id="126" class="Keyword">open</a> <a id="131" class="Keyword">import</a> <a id="138" href="Class.MonadTC.html" class="Module">Class.MonadTC</a>
 
-<a id="153" class="Keyword">open</a> <a id="158" class="Keyword">import</a> <a id="165" href="Reflection.Syntax.html" class="Module">Reflection.Syntax</a>
-<a id="183" class="Keyword">open</a> <a id="188" class="Keyword">import</a> <a id="195" href="Reflection.Debug.html" class="Module">Reflection.Debug</a>
-<a id="212" class="Keyword">open</a> <a id="217" class="Keyword">import</a> <a id="224" href="Reflection.Tactic.html" class="Module">Reflection.Tactic</a>
-<a id="242" class="Keyword">open</a> <a id="247" class="Keyword">import</a> <a id="254" href="Reflection.TCI.html" class="Module">Reflection.TCI</a>
-<a id="269" class="Keyword">open</a> <a id="274" class="Keyword">import</a> <a id="281" href="Reflection.Utils.html" class="Module">Reflection.Utils</a>
-<a id="298" class="Keyword">open</a> <a id="303" class="Keyword">import</a> <a id="310" href="Reflection.Utils.Debug.html" class="Module">Reflection.Utils.Debug</a>
-<a id="333" class="Keyword">open</a> <a id="338" class="Keyword">import</a> <a id="345" href="Reflection.Utils.TCI.html" class="Module">Reflection.Utils.TCI</a>
-<a id="366" class="Keyword">open</a> <a id="371" class="Keyword">import</a> <a id="378" href="Reflection.Utils.TCM.html" class="Module">Reflection.Utils.TCM</a>
-<a id="399" class="Keyword">open</a> <a id="404" class="Keyword">import</a> <a id="411" href="Reflection.AlphaEquality.html" class="Module">Reflection.AlphaEquality</a>
-<a id="436" class="Keyword">open</a> <a id="441" class="Keyword">import</a> <a id="448" href="Reflection.AntiUnification.html" class="Module">Reflection.AntiUnification</a>
+<a id="153" class="Keyword">open</a> <a id="158" class="Keyword">import</a> <a id="165" href="Class.Convertible.html" class="Module">Class.Convertible</a>
+<a id="183" class="Keyword">open</a> <a id="188" class="Keyword">import</a> <a id="195" href="Class.HasHsType.html" class="Module">Class.HasHsType</a>
 
-<a id="476" class="Keyword">open</a> <a id="481" class="Keyword">import</a> <a id="488" href="Tactic.html" class="Module">Tactic</a>
+<a id="212" class="Keyword">open</a> <a id="217" class="Keyword">import</a> <a id="224" href="Reflection.Syntax.html" class="Module">Reflection.Syntax</a>
+<a id="242" class="Keyword">open</a> <a id="247" class="Keyword">import</a> <a id="254" href="Reflection.Debug.html" class="Module">Reflection.Debug</a>
+<a id="271" class="Keyword">open</a> <a id="276" class="Keyword">import</a> <a id="283" href="Reflection.Tactic.html" class="Module">Reflection.Tactic</a>
+<a id="301" class="Keyword">open</a> <a id="306" class="Keyword">import</a> <a id="313" href="Reflection.TCI.html" class="Module">Reflection.TCI</a>
+<a id="328" class="Keyword">open</a> <a id="333" class="Keyword">import</a> <a id="340" href="Reflection.Utils.html" class="Module">Reflection.Utils</a>
+<a id="357" class="Keyword">open</a> <a id="362" class="Keyword">import</a> <a id="369" href="Reflection.Utils.Debug.html" class="Module">Reflection.Utils.Debug</a>
+<a id="392" class="Keyword">open</a> <a id="397" class="Keyword">import</a> <a id="404" href="Reflection.Utils.TCI.html" class="Module">Reflection.Utils.TCI</a>
+<a id="425" class="Keyword">open</a> <a id="430" class="Keyword">import</a> <a id="437" href="Reflection.Utils.TCM.html" class="Module">Reflection.Utils.TCM</a>
+<a id="458" class="Keyword">open</a> <a id="463" class="Keyword">import</a> <a id="470" href="Reflection.AlphaEquality.html" class="Module">Reflection.AlphaEquality</a>
+<a id="495" class="Keyword">open</a> <a id="500" class="Keyword">import</a> <a id="507" href="Reflection.AntiUnification.html" class="Module">Reflection.AntiUnification</a>
+
+<a id="535" class="Keyword">open</a> <a id="540" class="Keyword">import</a> <a id="547" href="Tactic.html" class="Module">Tactic</a>
 </pre></body></html>
