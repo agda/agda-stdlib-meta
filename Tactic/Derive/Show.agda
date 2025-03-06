@@ -1,7 +1,7 @@
 -- Deriving show.
 
 {-# OPTIONS -v allTactics:100 #-}
-{-# OPTIONS --safe #-}
+{-# OPTIONS --safe --with-K #-}
 module Tactic.Derive.Show where
 
 open import Meta.Prelude

@@ -1,3 +1,4 @@
+{-# OPTIONS --with-K #-}
 module Tactic.Derive.HsType where
 
 open import Meta.Init hiding (TC; Monad-TC; MonadError-TC)

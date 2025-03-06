@@ -6,8 +6,10 @@ open import Class.MonadReader
 open import Class.MonadError
 open import Class.MonadTC
 
-open import Class.Convertible
 open import Class.HasHsType
+open import Class.HasHsType.Foreign
+open import Class.Convertible
+open import Class.Convertible.Foreign
 
 open import Reflection.Syntax
 open import Reflection.Debug

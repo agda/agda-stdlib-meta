@@ -1,4 +1,5 @@
-{-# OPTIONS -v extra:100 #-}
+{-# OPTIONS --safe --without-K #-}
+-- {-# OPTIONS -v tactic.extra:100 #-}
 module Tactic.Extra where
 
 open import Meta.Prelude
@@ -21,7 +22,7 @@ open import Class.Monad
 open import Class.Semigroup
 open import Class.Show
 
-open Debug ("extra" , 100)
+open Debug ("tactic.extra" , 100)
 
 macro
   ∶t : Name → Hole → TC ⊤

@@ -3,10 +3,10 @@ module Tactic.ByEq where
 
 open import Meta.Init hiding (TC)
 open import Meta.Prelude
-open import Class.Functor.Core; open import Class.Functor.Instances
-open import Class.Monad.Core; open import Class.Monad.Instances
+open import Class.Functor
+open import Class.Monad
 open import Reflection using (TC; withNormalisation; inferType; unify)
-open import Reflection.Utils
+open import Reflection.Utils using (argTys)
 
 -- Introduce as many arguments as possible and then:
 --   1. for those of type `_ ≡ _`, unify with  `refl`

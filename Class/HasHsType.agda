@@ -1,3 +1,4 @@
+{-# OPTIONS --safe --without-K #-}
 module Class.HasHsType where
 
 open import Class.HasHsType.Core public

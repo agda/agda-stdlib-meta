@@ -1,3 +1,4 @@
+{-# OPTIONS --safe --without-K #-}
 module Class.Convertible.Core where
 
 open import Meta.Prelude
