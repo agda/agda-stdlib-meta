@@ -5,7 +5,9 @@ module Meta.Prelude where
 -- ** stdlib re-exports
 open import Level public
   renaming (_⊔_ to _⊔ˡ_; suc to sucˡ; zero to zeroˡ)
-open import Function public
+variable
+  ℓ ℓ′ ℓ″ : Level
+  A B C D : Set ℓ
 
 open import Data.Bool public
   hiding (_≟_; _≤_; _≤?_; _<_; _<?_)
@@ -25,22 +27,26 @@ open import Data.Nat public
 open import Data.String public
   using (String; _<+>_)
 
+open import Function public
+open import Relation.Nullary public
+  using (Dec; yes; no)
 open import Relation.Binary.PropositionalEquality public
   hiding (preorder; setoid; [_]; module ≡-Reasoning; decSetoid)
 
 -- ** helper funs
-lookupᵇ : {A B : Set} → (A → A → Bool) → List (A × B) → A → Maybe B
+lookupᵇ : (A → A → Bool) → List (A × B) → A → Maybe B
 lookupᵇ f [] n = nothing
 lookupᵇ f ((k , v) ∷ l) n = if f k n then just v else lookupᵇ f l n
 
-zipWithIndex : {A B : Set} → (ℕ → A → B) → List A → List B
+zipWithIndex : (ℕ → A → B) → List A → List B
 zipWithIndex f l = zipWith f (upTo $ length l) l
   where open import Data.Fin; open import Data.List
 
-enumerate : {A : Set} → List A → List (ℕ × A)
+enumerate : List A → List (ℕ × A)
 enumerate = zipWithIndex _,_
 
--- ** variables
-variable
-  ℓ ℓ′ ℓ″ : Level
-  A B C D : Set ℓ
+_⁉_ : List A → ℕ → Maybe A
+_⁉_ = λ where
+  []       _       → nothing
+  (x ∷ _)  zero    → just x
+  (_ ∷ xs) (suc n) → xs ⁉ n

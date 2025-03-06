@@ -1,3 +1,4 @@
+{-# OPTIONS --safe --without-K #-}
 module Tactic.Existentials where
 
 open import Meta.Prelude

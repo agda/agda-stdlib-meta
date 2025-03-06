@@ -18,8 +18,7 @@ open import Reflection.Tactic
 open import Reflection.Utils
 open import Reflection.Utils.TCI
 
-instance
-  _ = Functor-M
+instance _ = Functor-M
 
 assumption' : ITactic
 assumption' = inDebugPath "assumption" do

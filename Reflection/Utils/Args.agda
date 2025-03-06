@@ -64,3 +64,13 @@ hide = λ where
 apply⋯ : Args Type → Name → Type
 apply⋯ is n = def n $ remove-iArgs $
   map (λ{ (n , arg i _) → arg i (♯ (length is ∸ suc (toℕ n)))}) (zip (allFin $ length is) is)
+
+-- Applying a list of arguments to a term of any shape.
+apply∗ : Term → Args Term → Term
+apply∗ f xs = case f of λ where
+  (def n as)      → def n (as ++ xs)
+  (con c as)      → con c (as ++ xs)
+  (var x as)      → var x (as ++ xs)
+  (pat-lam cs as) → pat-lam cs (as ++ xs)
+  (meta x as)     → meta x (as ++ xs)
+  f               → f

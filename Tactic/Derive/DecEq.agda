@@ -7,7 +7,7 @@
 -- - maybe more
 
 {-# OPTIONS -v allTactics:100 #-}
-{-# OPTIONS --safe #-}
+{-# OPTIONS --safe --with-K #-}
 module Tactic.Derive.DecEq where
 
 open import Meta.Prelude
@@ -33,8 +33,7 @@ open import Class.Traversable
 open import Tactic.ClauseBuilder
 open import Tactic.Derive (quote DecEq) (quote _≟_)
 
-instance
-  _ = ContextMonad-MonadTC
+instance _ = ContextMonad-MonadTC
 
 open ClauseExprM
 

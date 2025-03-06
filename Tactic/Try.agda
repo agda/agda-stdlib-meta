@@ -1,11 +1,12 @@
-{-# OPTIONS -v try:100 #-}
+{-# OPTIONS --with-K #-}
+-- {-# OPTIONS -v tactic.try:100 #-}
 module Tactic.Try where
 
 open import Meta.Prelude
 
 open import Data.List
-open import Reflection hiding (_>>=_; _>>_; _≟_)
 
+open import Reflection hiding (_>>=_; _>>_; _≟_)
 open import Reflection.Syntax
 open import Reflection.Utils
 open import Reflection.Utils.Debug
@@ -18,7 +19,7 @@ open import Class.Monad
 open import Class.Semigroup
 open import Class.Show
 
-open Debug ("try" , 100)
+open Debug ("tactic.try" , 100)
 
 _∙_ : Term → Args Term → TC Term
 t ∙ [] = return t

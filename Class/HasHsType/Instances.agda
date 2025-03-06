@@ -1,9 +1,7 @@
+{-# OPTIONS --safe --without-K #-}
 module Class.HasHsType.Instances where
 
 open import Meta.Prelude
-
-open import Foreign.Haskell.Pair using (Pair)
-open import Foreign.Haskell.Either using (Either)
 
 open import Class.HasHsType.Core
 
@@ -21,12 +19,5 @@ module _ ⦃ _ : HasHsType A ⦄ where instance
   iHsTy-Maybe : HasHsType (Maybe A)
   iHsTy-Maybe .HasHsType.HsType = Maybe (HsType A)
 
-  module _ ⦃ _ : HasHsType B ⦄ where instance
-    iHsTy-Fun : HasHsType (A → B)
-    iHsTy-Fun .HasHsType.HsType = HsType A → HsType B
-
-    iHsTy-Sum : HasHsType (A ⊎ B)
-    iHsTy-Sum .HasHsType.HsType = Either (HsType A) (HsType B)
-
-    iHsTy-Pair : HasHsType (A × B)
-    iHsTy-Pair .HasHsType.HsType = Pair (HsType A) (HsType B)
+  iHsTy-Fun : ⦃ HasHsType B ⦄ → HasHsType (A → B)
+  iHsTy-Fun {B = B} .HasHsType.HsType = HsType A → HsType B

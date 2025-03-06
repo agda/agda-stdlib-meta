@@ -1,3 +1,4 @@
+{-# OPTIONS --with-K #-}
 module Tactic.Derive.Convertible where
 
 open import Meta.Prelude

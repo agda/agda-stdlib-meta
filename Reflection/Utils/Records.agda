@@ -5,18 +5,13 @@ open import Meta.Prelude
 open import Meta.Init
 
 open import Data.List using (map)
-open import Relation.Nullary.Decidable using (⌊_⌋)
-
-import Reflection.AST.Name as Name
+open import Class.DecEq using (_==_)
 
 mkRecord : List (Name × Term) → Term
-mkRecord fs = pat-lam (map (λ where (fn , e) → clause [] [ vArg (proj fn) ] e) fs) []
+mkRecord fs = pat-lam (map (λ (fn , e) → clause [] [ vArg (proj fn) ] e) fs) []
 
 updateField : List Name → Term → Name → Term → Term
 updateField fs rexp fn fexp =
-  pat-lam (flip map fs $ λ f →
-    if ⌊ f Name.≟ fn ⌋ then
-      clause [] [ vArg (proj fn) ] fexp
-    else
-      clause [] [ vArg (proj f) ] (f ∙⟦ rexp ⟧)
-    ) []
+  flip pat-lam [] $ flip map fs $ λ f →
+    clause [] [ vArg (proj f) ] $
+      if f == fn then fexp else (f ∙⟦ rexp ⟧)
