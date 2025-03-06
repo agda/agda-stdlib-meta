@@ -1,24 +1,24 @@
 <!DOCTYPE HTML>
-<html><head><meta charset="utf-8"><title>Tactic</title><link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css'/><style>.github-fork-ribbon:before { background-color: #333; }</style><link rel="stylesheet" href="css/Agda.css"></head><body><a class='github-fork-ribbon'href='https://github.com/agda/agda-stdlib-meta/tree/master///Tactic.agda'data-ribbon='Source code on Github' title='Source code on Github'>Source code on Github</a><pre class="Agda"><a id="1" class="Keyword">module</a> <a id="8" href="Tactic.html" class="Module">Tactic</a> <a id="15" class="Keyword">where</a>
+<html><head><meta charset="utf-8"><title>Tactic</title><link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css'/><style>.github-fork-ribbon:before { background-color: #333; }</style><link rel="stylesheet" href="css/Agda.css"></head><body><a class='github-fork-ribbon'href='https://github.com/agda/agda-stdlib-meta/tree/orestis/inline-tactic///Tactic.agda'data-ribbon='Source code on Github' title='Source code on Github'>Source code on Github</a><pre class="Agda"><a id="1" class="Keyword">module</a> <a id="8" href="Tactic.html" class="Module">Tactic</a> <a id="15" class="Keyword">where</a>
 
 <a id="22" class="Keyword">open</a> <a id="27" class="Keyword">import</a> <a id="34" href="Tactic.Try.html" class="Module">Tactic.Try</a> <a id="45" class="Keyword">public</a>
-<a id="52" class="Keyword">open</a> <a id="57" class="Keyword">import</a> <a id="64" href="Tactic.Rewrite.html" class="Module">Tactic.Rewrite</a> <a id="79" class="Keyword">public</a>
-<a id="86" class="Keyword">open</a> <a id="91" class="Keyword">import</a> <a id="98" href="Tactic.Extra.html" class="Module">Tactic.Extra</a> <a id="111" class="Keyword">public</a>
-<a id="118" class="Keyword">open</a> <a id="123" class="Keyword">import</a> <a id="130" href="Tactic.Existentials.html" class="Module">Tactic.Existentials</a> <a id="150" class="Keyword">public</a>
-<a id="157" class="Keyword">open</a> <a id="162" class="Keyword">import</a> <a id="169" href="Tactic.ByEq.html" class="Module">Tactic.ByEq</a> <a id="181" class="Keyword">public</a>
+<a id="52" class="Keyword">open</a> <a id="57" class="Keyword">import</a> <a id="64" href="Tactic.Rewrite.html" class="Module">Tactic.Rewrite</a> <a id="79" class="Keyword">public</a><a id="85" class="Symbol">;</a> <a id="87" class="Keyword">open</a> <a id="92" class="Keyword">import</a> <a id="99" href="Tactic.Rewrite.Tests.html" class="Module">Tactic.Rewrite.Tests</a>
+<a id="120" class="Keyword">open</a> <a id="125" class="Keyword">import</a> <a id="132" href="Tactic.Extra.html" class="Module">Tactic.Extra</a> <a id="145" class="Keyword">public</a>
+<a id="152" class="Keyword">open</a> <a id="157" class="Keyword">import</a> <a id="164" href="Tactic.Existentials.html" class="Module">Tactic.Existentials</a> <a id="184" class="Keyword">public</a>
+<a id="191" class="Keyword">open</a> <a id="196" class="Keyword">import</a> <a id="203" href="Tactic.ByEq.html" class="Module">Tactic.ByEq</a> <a id="215" class="Keyword">public</a>
+<a id="222" class="Keyword">open</a> <a id="227" class="Keyword">import</a> <a id="234" href="Tactic.Inline.html" class="Module">Tactic.Inline</a> <a id="248" class="Keyword">public</a>
 
-<a id="189" class="Keyword">open</a> <a id="194" class="Keyword">import</a> <a id="201" href="Tactic.AnyOf.html" class="Module">Tactic.AnyOf</a> <a id="214" class="Keyword">public</a>
-<a id="221" class="Keyword">open</a> <a id="226" class="Keyword">import</a> <a id="233" href="Tactic.Assumption.html" class="Module">Tactic.Assumption</a> <a id="251" class="Keyword">public</a>
-<a id="258" class="Keyword">open</a> <a id="263" class="Keyword">import</a> <a id="270" href="Tactic.Case.html" class="Module">Tactic.Case</a> <a id="282" class="Keyword">public</a>
-<a id="289" class="Keyword">open</a> <a id="294" class="Keyword">import</a> <a id="301" href="Tactic.Constrs.html" class="Module">Tactic.Constrs</a> <a id="316" class="Keyword">public</a>
-<a id="323" class="Keyword">open</a> <a id="328" class="Keyword">import</a> <a id="335" href="Tactic.EquationalReasoning.html" class="Module">Tactic.EquationalReasoning</a> <a id="362" class="Keyword">public</a>
-<a id="369" class="Keyword">open</a> <a id="374" class="Keyword">import</a> <a id="381" href="Tactic.Eta.html" class="Module">Tactic.Eta</a> <a id="392" class="Keyword">public</a>
-<a id="399" class="Keyword">open</a> <a id="404" class="Keyword">import</a> <a id="411" href="Tactic.Intro.html" class="Module">Tactic.Intro</a> <a id="424" class="Keyword">public</a>
-<a id="431" class="Keyword">open</a> <a id="436" class="Keyword">import</a> <a id="443" href="Tactic.ReduceDec.html" class="Module">Tactic.ReduceDec</a> <a id="460" class="Keyword">public</a>
+<a id="256" class="Keyword">open</a> <a id="261" class="Keyword">import</a> <a id="268" href="Tactic.AnyOf.html" class="Module">Tactic.AnyOf</a> <a id="281" class="Keyword">public</a>
+<a id="288" class="Keyword">open</a> <a id="293" class="Keyword">import</a> <a id="300" href="Tactic.Assumption.html" class="Module">Tactic.Assumption</a> <a id="318" class="Keyword">public</a>
+<a id="325" class="Keyword">open</a> <a id="330" class="Keyword">import</a> <a id="337" href="Tactic.Case.html" class="Module">Tactic.Case</a> <a id="349" class="Keyword">public</a>
+<a id="356" class="Keyword">open</a> <a id="361" class="Keyword">import</a> <a id="368" href="Tactic.Constrs.html" class="Module">Tactic.Constrs</a> <a id="383" class="Keyword">public</a>
+<a id="390" class="Keyword">open</a> <a id="395" class="Keyword">import</a> <a id="402" href="Tactic.EquationalReasoning.html" class="Module">Tactic.EquationalReasoning</a> <a id="429" class="Keyword">public</a>
+<a id="436" class="Keyword">open</a> <a id="441" class="Keyword">import</a> <a id="448" href="Tactic.Eta.html" class="Module">Tactic.Eta</a> <a id="459" class="Keyword">public</a>
+<a id="466" class="Keyword">open</a> <a id="471" class="Keyword">import</a> <a id="478" href="Tactic.Intro.html" class="Module">Tactic.Intro</a> <a id="491" class="Keyword">public</a>
+<a id="498" class="Keyword">open</a> <a id="503" class="Keyword">import</a> <a id="510" href="Tactic.ReduceDec.html" class="Module">Tactic.ReduceDec</a> <a id="527" class="Keyword">public</a>
 
-<a id="468" class="Keyword">open</a> <a id="473" class="Keyword">import</a> <a id="480" href="Tactic.Derive.DecEq.html" class="Module">Tactic.Derive.DecEq</a> <a id="500" class="Keyword">public</a>
-<a id="507" class="Keyword">open</a> <a id="512" class="Keyword">import</a> <a id="519" href="Tactic.Derive.Show.html" class="Module">Tactic.Derive.Show</a> <a id="538" class="Keyword">public</a>
-<a id="545" class="Keyword">open</a> <a id="550" class="Keyword">import</a> <a id="557" href="Tactic.Derive.HsType.html" class="Module">Tactic.Derive.HsType</a> <a id="578" class="Keyword">public</a>
-<a id="585" class="Keyword">open</a> <a id="590" class="Keyword">import</a> <a id="597" href="Tactic.Derive.HsType.Tests.html" class="Module">Tactic.Derive.HsType.Tests</a>
-<a id="624" class="Keyword">open</a> <a id="629" class="Keyword">import</a> <a id="636" href="Tactic.Derive.Convertible.html" class="Module">Tactic.Derive.Convertible</a> <a id="662" class="Keyword">public</a>
+<a id="535" class="Keyword">open</a> <a id="540" class="Keyword">import</a> <a id="547" href="Tactic.Derive.DecEq.html" class="Module">Tactic.Derive.DecEq</a> <a id="567" class="Keyword">public</a>
+<a id="574" class="Keyword">open</a> <a id="579" class="Keyword">import</a> <a id="586" href="Tactic.Derive.Show.html" class="Module">Tactic.Derive.Show</a> <a id="605" class="Keyword">public</a>
+<a id="612" class="Keyword">open</a> <a id="617" class="Keyword">import</a> <a id="624" href="Tactic.Derive.HsType.html" class="Module">Tactic.Derive.HsType</a> <a id="645" class="Keyword">public</a><a id="651" class="Symbol">;</a> <a id="653" class="Keyword">open</a> <a id="658" class="Keyword">import</a> <a id="665" href="Tactic.Derive.HsType.Tests.html" class="Module">Tactic.Derive.HsType.Tests</a>
+<a id="692" class="Keyword">open</a> <a id="697" class="Keyword">import</a> <a id="704" href="Tactic.Derive.Convertible.html" class="Module">Tactic.Derive.Convertible</a> <a id="730" class="Keyword">public</a>
 </pre></body></html>

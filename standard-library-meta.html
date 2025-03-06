@@ -1,5 +1,5 @@
 <!DOCTYPE HTML>
-<html><head><meta charset="utf-8"><title>standard-library-meta</title><link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css'/><style>.github-fork-ribbon:before { background-color: #333; }</style><link rel="stylesheet" href="css/Agda.css"></head><body><a class='github-fork-ribbon'href='https://github.com/agda/agda-stdlib-meta/tree/master///standard-library-meta.agda'data-ribbon='Source code on Github' title='Source code on Github'>Source code on Github</a><pre class="Agda"><a id="1" class="Keyword">module</a> <a id="8" href="standard-library-meta.html" class="Module">standard-library-meta</a> <a id="30" class="Keyword">where</a>
+<html><head><meta charset="utf-8"><title>standard-library-meta</title><link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css'/><style>.github-fork-ribbon:before { background-color: #333; }</style><link rel="stylesheet" href="css/Agda.css"></head><body><a class='github-fork-ribbon'href='https://github.com/agda/agda-stdlib-meta/tree/orestis/inline-tactic///standard-library-meta.agda'data-ribbon='Source code on Github' title='Source code on Github'>Source code on Github</a><pre class="Agda"><a id="1" class="Keyword">module</a> <a id="8" href="standard-library-meta.html" class="Module">standard-library-meta</a> <a id="30" class="Keyword">where</a>
 
 <a id="37" class="Keyword">open</a> <a id="42" class="Keyword">import</a> <a id="49" href="Algebra.Function.html" class="Module">Algebra.Function</a>
 
@@ -7,19 +7,21 @@
 <a id="97" class="Keyword">open</a> <a id="102" class="Keyword">import</a> <a id="109" href="Class.MonadError.html" class="Module">Class.MonadError</a>
 <a id="126" class="Keyword">open</a> <a id="131" class="Keyword">import</a> <a id="138" href="Class.MonadTC.html" class="Module">Class.MonadTC</a>
 
-<a id="153" class="Keyword">open</a> <a id="158" class="Keyword">import</a> <a id="165" href="Class.Convertible.html" class="Module">Class.Convertible</a>
-<a id="183" class="Keyword">open</a> <a id="188" class="Keyword">import</a> <a id="195" href="Class.HasHsType.html" class="Module">Class.HasHsType</a>
+<a id="153" class="Keyword">open</a> <a id="158" class="Keyword">import</a> <a id="165" href="Class.HasHsType.html" class="Module">Class.HasHsType</a>
+<a id="181" class="Keyword">open</a> <a id="186" class="Keyword">import</a> <a id="193" href="Class.HasHsType.Foreign.html" class="Module">Class.HasHsType.Foreign</a>
+<a id="217" class="Keyword">open</a> <a id="222" class="Keyword">import</a> <a id="229" href="Class.Convertible.html" class="Module">Class.Convertible</a>
+<a id="247" class="Keyword">open</a> <a id="252" class="Keyword">import</a> <a id="259" href="Class.Convertible.Foreign.html" class="Module">Class.Convertible.Foreign</a>
 
-<a id="212" class="Keyword">open</a> <a id="217" class="Keyword">import</a> <a id="224" href="Reflection.Syntax.html" class="Module">Reflection.Syntax</a>
-<a id="242" class="Keyword">open</a> <a id="247" class="Keyword">import</a> <a id="254" href="Reflection.Debug.html" class="Module">Reflection.Debug</a>
-<a id="271" class="Keyword">open</a> <a id="276" class="Keyword">import</a> <a id="283" href="Reflection.Tactic.html" class="Module">Reflection.Tactic</a>
-<a id="301" class="Keyword">open</a> <a id="306" class="Keyword">import</a> <a id="313" href="Reflection.TCI.html" class="Module">Reflection.TCI</a>
-<a id="328" class="Keyword">open</a> <a id="333" class="Keyword">import</a> <a id="340" href="Reflection.Utils.html" class="Module">Reflection.Utils</a>
-<a id="357" class="Keyword">open</a> <a id="362" class="Keyword">import</a> <a id="369" href="Reflection.Utils.Debug.html" class="Module">Reflection.Utils.Debug</a>
-<a id="392" class="Keyword">open</a> <a id="397" class="Keyword">import</a> <a id="404" href="Reflection.Utils.TCI.html" class="Module">Reflection.Utils.TCI</a>
-<a id="425" class="Keyword">open</a> <a id="430" class="Keyword">import</a> <a id="437" href="Reflection.Utils.TCM.html" class="Module">Reflection.Utils.TCM</a>
-<a id="458" class="Keyword">open</a> <a id="463" class="Keyword">import</a> <a id="470" href="Reflection.AlphaEquality.html" class="Module">Reflection.AlphaEquality</a>
-<a id="495" class="Keyword">open</a> <a id="500" class="Keyword">import</a> <a id="507" href="Reflection.AntiUnification.html" class="Module">Reflection.AntiUnification</a>
+<a id="286" class="Keyword">open</a> <a id="291" class="Keyword">import</a> <a id="298" href="Reflection.Syntax.html" class="Module">Reflection.Syntax</a>
+<a id="316" class="Keyword">open</a> <a id="321" class="Keyword">import</a> <a id="328" href="Reflection.Debug.html" class="Module">Reflection.Debug</a>
+<a id="345" class="Keyword">open</a> <a id="350" class="Keyword">import</a> <a id="357" href="Reflection.Tactic.html" class="Module">Reflection.Tactic</a>
+<a id="375" class="Keyword">open</a> <a id="380" class="Keyword">import</a> <a id="387" href="Reflection.TCI.html" class="Module">Reflection.TCI</a>
+<a id="402" class="Keyword">open</a> <a id="407" class="Keyword">import</a> <a id="414" href="Reflection.Utils.html" class="Module">Reflection.Utils</a>
+<a id="431" class="Keyword">open</a> <a id="436" class="Keyword">import</a> <a id="443" href="Reflection.Utils.Debug.html" class="Module">Reflection.Utils.Debug</a>
+<a id="466" class="Keyword">open</a> <a id="471" class="Keyword">import</a> <a id="478" href="Reflection.Utils.TCI.html" class="Module">Reflection.Utils.TCI</a>
+<a id="499" class="Keyword">open</a> <a id="504" class="Keyword">import</a> <a id="511" href="Reflection.Utils.TCM.html" class="Module">Reflection.Utils.TCM</a>
+<a id="532" class="Keyword">open</a> <a id="537" class="Keyword">import</a> <a id="544" href="Reflection.AlphaEquality.html" class="Module">Reflection.AlphaEquality</a>
+<a id="569" class="Keyword">open</a> <a id="574" class="Keyword">import</a> <a id="581" href="Reflection.AntiUnification.html" class="Module">Reflection.AntiUnification</a>
 
-<a id="535" class="Keyword">open</a> <a id="540" class="Keyword">import</a> <a id="547" href="Tactic.html" class="Module">Tactic</a>
+<a id="609" class="Keyword">open</a> <a id="614" class="Keyword">import</a> <a id="621" href="Tactic.html" class="Module">Tactic</a>
 </pre></body></html>
