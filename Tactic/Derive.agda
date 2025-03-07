@@ -24,6 +24,7 @@ open import Meta.Prelude
 open import Agda.Builtin.Reflection using () renaming (primShowQName to showName)
 
 import Data.List as L
+import Data.Bool.ListAction as LB
 import Data.List.NonEmpty as NE
 import Data.String as S
 open import Data.Maybe using (fromMaybe)
@@ -101,7 +102,7 @@ genMutualHelpers n = do
   where
     helper : Type → Maybe Name
     helper (def n' args) =
-      if L.any (λ where (arg _ (def n'' _)) → ⌊ n ≟ n'' ⌋ ; _ → false) args
+      if LB.any (λ where (arg _ (def n'' _)) → ⌊ n ≟ n'' ⌋ ; _ → false) args
       then just n' else nothing
     helper _ = nothing
 

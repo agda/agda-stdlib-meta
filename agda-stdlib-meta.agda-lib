@@ -1,5 +1,5 @@
 name: standard-library-meta
 depend:
-  standard-library
+  standard-library-2.2
   standard-library-classes
 include: .
