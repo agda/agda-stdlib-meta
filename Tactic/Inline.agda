@@ -18,7 +18,7 @@ open import Class.MonadTC.Instances
 open import Class.MonadError.Instances
 
 open import Meta.Prelude
-open import Reflection.Syntax public
+open import Reflection.Syntax
 open import Reflection.Utils using (apply∗)
 open import Reflection.Utils.Debug; open Debug ("tactic.inline" , 100)
 -- open import Meta.Init
