@@ -24,7 +24,7 @@ open import Class.HasHsType
 open import Tactic.Derive.HsType
 
 private
-  instance _ = Functor-M {TC}
+  instance _ = Functor-M {_} {TC}
 
   open MonadReader ⦃...⦄
 
