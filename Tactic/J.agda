@@ -7,11 +7,11 @@
 -- via `open import Tactic.J (quote J) (quote refl)`
 --------------------------------------------------------------------------------
 
-open import Meta
+open import Meta.Init
 
 module Tactic.J (J-name refl-name : Name) where
 
-open import Meta.Prelude
+open import Meta.Prelude hiding (J)
 
 open import Class.Monad
 open import Class.MonadError
@@ -46,14 +46,13 @@ macro
 
 private
   module Test where
-    open import Relation.Binary.PropositionalEquality
+    open import Relation.Binary.PropositionalEquality hiding (J)
     open ≡-Reasoning
     open import Tactic.Defaults
 
     -- since we can't use names abstractly, we need to do some yoga here
 
     private variable
-      A : Set
       x y z w : A
 
     J : ∀ {ℓ₁ ℓ₂} {A : Set ℓ₁} {x : A} (P : (y : A) → x ≡ y → Set ℓ₂)
