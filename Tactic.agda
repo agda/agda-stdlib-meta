@@ -14,6 +14,7 @@ open import Tactic.Constrs public
 open import Tactic.EquationalReasoning public
 open import Tactic.Eta public
 open import Tactic.Intro public
+open import Tactic.J public
 open import Tactic.ReduceDec public
 
 open import Tactic.Derive.DecEq public
