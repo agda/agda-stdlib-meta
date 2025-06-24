@@ -33,61 +33,63 @@ open import Class.Traversable
 open import Tactic.ClauseBuilder
 open import Tactic.Derive (quote DecEq) (quote _≟_)
 
-instance _ = ContextMonad-MonadTC
 
 open ClauseExprM
 
-`yes `no : Term → Term
-`yes x = quote _because_ ◆⟦ quote true  ◆ ∣ quote ofʸ ◆⟦ x ⟧ ⟧
-`no  x = quote _because_ ◆⟦ quote false ◆ ∣ quote ofⁿ ◆⟦ x ⟧ ⟧
+private
+  instance _ = ContextMonad-MonadTC
 
--- We take the Dec P argument first to improve type checking performance.
--- It's easy to infer the type of P from this argument and we need to know
--- P to be able to check the pattern lambda generated for the P → Q direction
--- of the isomorphism. Having the isomorphism first would cause the type checker
--- to go back and forth between the pattern lambda and the Dec P argument,
--- inferring just enough of the type of make progress on the lambda.
-map' : ∀ {p q} {P : Set p} {Q : Set q} → Dec P → P ⇔ Q → Dec Q
-map' d record { to = to ; from = from } = map′ to from d
+  `yes `no : Term → Term
+  `yes x = quote _because_ ◆⟦ quote true  ◆ ∣ quote ofʸ ◆⟦ x ⟧ ⟧
+  `no  x = quote _because_ ◆⟦ quote false ◆ ∣ quote ofⁿ ◆⟦ x ⟧ ⟧
 
-module _ (transName : Name → Maybe Name) where
+  -- We take the Dec P argument first to improve type checking performance.
+  -- It's easy to infer the type of P from this argument and we need to know
+  -- P to be able to check the pattern lambda generated for the P → Q direction
+  -- of the isomorphism. Having the isomorphism first would cause the type checker
+  -- to go back and forth between the pattern lambda and the Dec P argument,
+  -- inferring just enough of the type of make progress on the lambda.
+  map' : ∀ {p q} {P : Set p} {Q : Set q} → Dec P → P ⇔ Q → Dec Q
+  map' d record { to = to ; from = from } = map′ to from d
 
-  eqFromTerm : Term → Term → Term → Term
-  eqFromTerm (def n _) t t' with transName n
-  ... | just n'     = def (quote _≟_) (iArg (n' ∙) ∷ vArg t ∷ vArg t' ∷ [])
-  ... | nothing     = quote _≟_ ∙⟦ t ∣ t' ⟧
-  eqFromTerm _ t t' = quote _≟_ ∙⟦ t ∣ t' ⟧
+  module _ (transName : Name → Maybe Name) where
 
-  toDecEqName : SinglePattern → List (Term → Term → Term)
-  toDecEqName (l , _) = L.map (λ where (_ , arg _ t) → eqFromTerm t) l
+    eqFromTerm : Term → Term → Term → Term
+    eqFromTerm (def n _) t t' with transName n
+    ... | just n'     = def (quote _≟_) (iArg (n' ∙) ∷ vArg t ∷ vArg t' ∷ [])
+    ... | nothing     = quote _≟_ ∙⟦ t ∣ t' ⟧
+    eqFromTerm _ t t' = quote _≟_ ∙⟦ t ∣ t' ⟧
 
-  -- on the diagonal we have one pattern, outside we don't care
-  -- assume that the types in the pattern are properly normalized
-  mapDiag : Maybe SinglePattern → TC Term
-  mapDiag nothing          = return $ `no `λ⦅ [ ("" , vArg?) ] ⦆∅
-  mapDiag (just p@(l , _)) = let k = length l in do
-    typeList ← traverse ⦃ Functor-List ⦄ inferType (applyDownFrom ♯ (length l))
-    return $ quote map' ∙⟦ genPf k (L.map eqFromTerm typeList) ∣ genEquiv k ⟧
-    where
-      genPf : ℕ → List (Term → Term → Term) → Term
-      genPf k []      = `yes (quote tt ◆)
-      genPf k (n ∷ l) = quote _×-dec_ ∙⟦ genPf k l ∣ n (♯ (length l)) (♯ (length l + k)) ⟧
+    toDecEqName : SinglePattern → List (Term → Term → Term)
+    toDecEqName (l , _) = L.map (λ where (_ , arg _ t) → eqFromTerm t) l
 
-      -- c x1 .. xn ≡ c y1 .. yn ⇔ x1 ≡ y1 .. xn ≡ yn
-      genEquiv : ℕ → Term
-      genEquiv n = quote mk⇔ ∙⟦ `λ⟦ reflPattern n ⇒ quote refl ◆ ⟧ ∣ `λ⟦ quote refl ◇ ⇒ reflTerm n ⟧ ⟧
-        where
-          reflPattern : ℕ → Pattern
-          reflPattern 0       = quote tt ◇
-          reflPattern (suc n) = quote _,_ ◇⟦ reflPattern n ∣ quote refl ◇ ⟧
+    -- on the diagonal we have one pattern, outside we don't care
+    -- assume that the types in the pattern are properly normalized
+    mapDiag : Maybe SinglePattern → TC Term
+    mapDiag nothing          = return $ `no `λ⦅ [ ("" , vArg?) ] ⦆∅
+    mapDiag (just p@(l , _)) = let k = length l in do
+      typeList ← traverse ⦃ Functor-List ⦄ inferType (applyDownFrom ♯ (length l))
+      return $ quote map' ∙⟦ genPf k (L.map eqFromTerm typeList) ∣ genEquiv k ⟧
+      where
+        genPf : ℕ → List (Term → Term → Term) → Term
+        genPf k []      = `yes (quote tt ◆)
+        genPf k (n ∷ l) = quote _×-dec_ ∙⟦ genPf k l ∣ n (♯ (length l)) (♯ (length l + k)) ⟧
 
-          reflTerm : ℕ → Term
-          reflTerm 0       = quote tt ◆
-          reflTerm (suc n) = quote _,_ ◆⟦ reflTerm n ∣ quote refl ◆ ⟧
+        -- c x1 .. xn ≡ c y1 .. yn ⇔ x1 ≡ y1 .. xn ≡ yn
+        genEquiv : ℕ → Term
+        genEquiv n = quote mk⇔ ∙⟦ `λ⟦ reflPattern n ⇒ quote refl ◆ ⟧ ∣ `λ⟦ quote refl ◇ ⇒ reflTerm n ⟧ ⟧
+          where
+            reflPattern : ℕ → Pattern
+            reflPattern 0       = quote tt ◇
+            reflPattern (suc n) = quote _,_ ◇⟦ reflPattern n ∣ quote refl ◇ ⟧
 
-  toMapDiag : SinglePattern → SinglePattern → NE.List⁺ SinglePattern × TC (ClauseExpr ⊎ Maybe Term)
-  toMapDiag p@(_ , arg _ p₁) p'@(_ , arg _ p₂) =
-    (p NE.∷ [ p' ] , finishMatch (if ⌊ p₁ ≟-Pattern p₂ ⌋ then mapDiag (just p) else mapDiag nothing))
+            reflTerm : ℕ → Term
+            reflTerm 0       = quote tt ◆
+            reflTerm (suc n) = quote _,_ ◆⟦ reflTerm n ∣ quote refl ◆ ⟧
+
+    toMapDiag : SinglePattern → SinglePattern → NE.List⁺ SinglePattern × TC (ClauseExpr ⊎ Maybe Term)
+    toMapDiag p@(_ , arg _ p₁) p'@(_ , arg _ p₂) =
+      (p NE.∷ [ p' ] , finishMatch (if ⌊ p₁ ≟-Pattern p₂ ⌋ then mapDiag (just p) else mapDiag nothing))
 
 module _ ⦃ _ : TCOptions ⦄ where
   derive-DecEq : List (Name × Name) → UnquoteDecl
