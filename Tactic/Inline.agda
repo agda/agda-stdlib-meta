@@ -23,11 +23,12 @@ open import Reflection.Utils using (apply∗)
 open import Reflection.Utils.Debug; open Debug ("tactic.inline" , 100)
 -- open import Meta.Init
 open import Reflection using (TC)
-instance
-  iTC  = MonadTC-TC
-  iTCE = MonadError-TC
 
 private
+  instance
+    iTC  = MonadTC-TC
+    iTCE = MonadError-TC
+
   pattern `case_of_ x y = quote case_of_ ∙⟦ x ∣ y ⟧
 
   $inline : Bool → Name → Term → TC ⊤
