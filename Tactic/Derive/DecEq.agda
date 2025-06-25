@@ -39,10 +39,6 @@ open ClauseExprM
 private
   instance _ = ContextMonad-MonadTC
 
-  `yes `no : Term → Term
-  `yes x = quote _because_ ◆⟦ quote true  ◆ ∣ quote ofʸ ◆⟦ x ⟧ ⟧
-  `no  x = quote _because_ ◆⟦ quote false ◆ ∣ quote ofⁿ ◆⟦ x ⟧ ⟧
-
   -- We take the Dec P argument first to improve type checking performance.
   -- It's easy to infer the type of P from this argument and we need to know
   -- P to be able to check the pattern lambda generated for the P → Q direction
