@@ -15,6 +15,7 @@ open import Data.List.Sort using (SortingAlgorithm)
 open import Data.List.Sort.MergeSort using (mergeSort)
 open SortingAlgorithm ≤-decTotalOrder (mergeSort ≤-decTotalOrder) public
 
+open import Reflection.QuotedDefinitions
 open import Reflection.Utils
 open import Reflection.Utils.TCI
 
@@ -213,7 +214,7 @@ module _ {M : ∀ {a} → Set a → Set a} ⦃ _ : Monad M ⦄ ⦃ me : MonadErr
     return $ ref x'
 
   caseMatch : Term → M ClauseExpr → M Term
-  caseMatch t expr = debugLog ("Match" ∷ᵈ t ∷ᵈ []) >> (refineWithSingle (quote case_of_ ∙⟦ t ∣_⟧) $
+  caseMatch t expr = debugLog ("Match" ∷ᵈ t ∷ᵈ []) >> (refineWithSingle (`case_of_ t) $
     (λ expr' → pat-lam (clauseExprToClauses expr') []) <$> expr)
 
   currentTyConstrPatterns : M (List SinglePattern)

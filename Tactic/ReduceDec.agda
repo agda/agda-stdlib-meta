@@ -9,6 +9,7 @@ open import Meta.Prelude
 open import Meta.Init
 
 open import Reflection.Tactic
+open import Reflection.QuotedDefinitions
 open import Reflection.Utils
 open import Reflection.Utils.TCI
 open import Relation.Nullary
@@ -79,8 +80,8 @@ fromWitnessFalse' (yes p) h = ⊥-elim $ h p
 fromWitnessFalse' (no ¬p) h = refl
 
 fromWitness'Type : Bool → Term → Term
-fromWitness'Type true  dec = def (quote _≡_) (hArg? ∷ hArg? ∷ def (quote isYes) (hArg? ∷ hArg? ∷ dec ⟨∷⟩ []) ⟨∷⟩ quote true  ◆ ⟨∷⟩ [])
-fromWitness'Type false dec = def (quote _≡_) (hArg? ∷ hArg? ∷ def (quote isYes) (hArg? ∷ hArg? ∷ dec ⟨∷⟩ []) ⟨∷⟩ quote false ◆ ⟨∷⟩ [])
+fromWitness'Type true  dec = quote isYes ∙⟦ dec ⟧ `≡ quote true  ◆
+fromWitness'Type false dec = quote isYes ∙⟦ dec ⟧ `≡ quote false ◆
 
 findDecRWHypWith : ITactic → Term → TC Term
 findDecRWHypWith tac dec =

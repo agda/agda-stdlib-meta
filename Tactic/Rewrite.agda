@@ -9,6 +9,7 @@ open import Data.Product using (map₂)
 open import Relation.Nullary.Decidable using (⌊_⌋)
 
 open import Reflection hiding (_>>=_; _>>_; _≟_)
+open import Reflection.QuotedDefinitions
 open import Reflection.Syntax
 open import Reflection.Tactic
 open import Reflection.Utils.Debug; open Debug ("tactic.rewrite" , 100)
@@ -21,7 +22,7 @@ open import Class.Show
 
 viewEq : Term → TC (Term × Term)
 viewEq eq = do
-  (def (quote _≡_) (_ ∷ _ ∷ vArg x ∷ vArg y ∷ [])) ← inferType eq
+  x ``≡ y ← inferType eq
     where _ → error "Can only write with equalities `x ≡ y`."
   return (x , y)
 
