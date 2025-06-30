@@ -111,11 +111,3 @@ Context      = Args Type
 TTerm        = Term × Type
 Hole         = Term
 THole        = Hole × Type
-
--- Syntax for quoting `yes` and `no`
-open import Relation.Nullary
-open import Relation.Nullary.Decidable
-
-`yes `no : Term → Term
-`yes x = quote _because_ ◆⟦ quote true  ◆ ∣ quote ofʸ ◆⟦ x ⟧ ⟧
-`no  x = quote _because_ ◆⟦ quote false ◆ ∣ quote ofⁿ ◆⟦ x ⟧ ⟧
