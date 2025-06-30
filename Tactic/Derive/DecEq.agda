@@ -23,6 +23,7 @@ open import Reflection.Tactic
 open import Reflection.AST.Term using (_≟-Pattern_)
 open import Reflection.Utils
 open import Reflection.Utils.TCI
+open import Reflection.QuotedDefinitions
 
 open import Class.DecEq.Core
 open import Class.Functor
@@ -73,15 +74,15 @@ private
 
         -- c x1 .. xn ≡ c y1 .. yn ⇔ x1 ≡ y1 .. xn ≡ yn
         genEquiv : ℕ → Term
-        genEquiv n = quote mk⇔ ∙⟦ `λ⟦ reflPattern n ⇒ quote refl ◆ ⟧ ∣ `λ⟦ quote refl ◇ ⇒ reflTerm n ⟧ ⟧
+        genEquiv n = quote mk⇔ ∙⟦ `λ⟦ reflPattern n ⇒ `refl ⟧ ∣ `λ⟦ ``refl ⇒ reflTerm n ⟧ ⟧
           where
             reflPattern : ℕ → Pattern
             reflPattern 0       = quote tt ◇
-            reflPattern (suc n) = quote _,_ ◇⟦ reflPattern n ∣ quote refl ◇ ⟧
+            reflPattern (suc n) = quote _,_ ◇⟦ reflPattern n ∣ ``refl ⟧
 
             reflTerm : ℕ → Term
             reflTerm 0       = quote tt ◆
-            reflTerm (suc n) = quote _,_ ◆⟦ reflTerm n ∣ quote refl ◆ ⟧
+            reflTerm (suc n) = quote _,_ ◆⟦ reflTerm n ∣ `refl ⟧
 
     toMapDiag : SinglePattern → SinglePattern → NE.List⁺ SinglePattern × TC (ClauseExpr ⊎ Maybe Term)
     toMapDiag p@(_ , arg _ p₁) p'@(_ , arg _ p₂) =

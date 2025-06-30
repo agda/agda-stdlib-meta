@@ -7,6 +7,7 @@ open import Class.Functor
 open import Class.Monad
 open import Reflection using (TC; withNormalisation; inferType; unify)
 open import Reflection.Utils using (argTys)
+open import Reflection.QuotedDefinitions
 
 -- Introduce as many arguments as possible and then:
 --   1. for those of type `_ ≡ _`, unify with  `refl`
@@ -16,8 +17,8 @@ by-eq : Hole → TC ⊤
 by-eq hole = do
   ty ← withNormalisation true $ inferType hole
   let ps : Args Pattern
-      ps = argTys ty <&> fmap λ {(def (quote _≡_) _) → quote refl ◇; _ → dot unknown}
-  unify hole $ pat-lam [ clause [] ps (quote refl ◆) ] []
+      ps = argTys ty <&> fmap λ { (_ ``≡ _) → ``refl ; _ → dot unknown }
+  unify hole $ pat-lam [ clause [] ps `refl ] []
 
 macro $by-eq = by-eq
 
