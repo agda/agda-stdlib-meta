@@ -17,17 +17,12 @@ import Data.List as L
 import Data.List.NonEmpty as NE
 
 open import Relation.Nullary
-open import Relation.Nullary.Decidable
 
 open import Reflection.Tactic
-open import Reflection.AST.Term using (_≟-Pattern_)
-open import Reflection.Utils
-open import Reflection.Utils.TCI
 open import Reflection.QuotedDefinitions
 
 open import Class.DecEq.Core
 open import Class.Functor
-open import Class.Monad
 open import Class.MonadTC.Instances
 open import Class.Traversable
 
@@ -40,14 +35,21 @@ open ClauseExprM
 private
   instance _ = ContextMonad-MonadTC
 
-  -- We take the Dec P argument first to improve type checking performance.
-  -- It's easy to infer the type of P from this argument and we need to know
-  -- P to be able to check the pattern lambda generated for the P → Q direction
-  -- of the isomorphism. Having the isomorphism first would cause the type checker
-  -- to go back and forth between the pattern lambda and the Dec P argument,
-  -- inferring just enough of the type of make progress on the lambda.
-  map' : ∀ {p q} {P : Set p} {Q : Set q} → Dec P → P ⇔ Q → Dec Q
-  map' d record { to = to ; from = from } = map′ to from d
+  -- Here's an example of what code this generates, here for a record R with 3 fields:
+  -- DecEq : DecEq R
+  -- DecEq ._≟_ ⟪ x₁ , x₂ , x₃ ⟫ ⟪ y₁ , y₂ , y₃ ⟫ =
+  --   case (x₁ ≟ y₁) of λ where
+  --     (false because ¬p) → no (case ¬p of λ where (ofⁿ ¬p) refl → ¬p refl)
+  --     (true because p₁) → case (x₂ ≟ y₂) of λ where
+  --       (false because ¬p) → no (case ¬p of λ where (ofⁿ ¬p) refl → ¬p refl)
+  --       (true because p₂) → case (x₃ ≟ y₃) of λ where
+  --         (false because ¬p) → no (case ¬p of λ where (ofⁿ ¬p) refl → ¬p refl)
+  --         (true because p₃) →  yes (case p₁ , p₂ , p₃ of λ where (ofʸ refl , ofʸ refl , ofʸ refl) → refl)
+
+  -- patterns almost like `yes` and `no`, except that they don't match the `Reflects` proof
+  -- delaying maching on the `Reflects` proof as late as possible results in a major speed increase
+  pattern ``yes' x = quote _because_ ◇⟦ quote true  ◇ ∣ x ⟧
+  pattern ``no'  x = quote _because_ ◇⟦ quote false ◇ ∣ x ⟧
 
   module _ (transName : Name → Maybe Name) where
 
@@ -57,36 +59,48 @@ private
     ... | nothing     = quote _≟_ ∙⟦ t ∣ t' ⟧
     eqFromTerm _ t t' = quote _≟_ ∙⟦ t ∣ t' ⟧
 
-    toDecEqName : SinglePattern → List (Term → Term → Term)
-    toDecEqName (l , _) = L.map (λ where (_ , arg _ t) → eqFromTerm t) l
-
-    -- on the diagonal we have one pattern, outside we don't care
+    -- `nothing`: outside of the diagonal, not equal
+    -- `just`: on the diagonal, with that pattern, could be equal
     -- assume that the types in the pattern are properly normalized
-    mapDiag : Maybe SinglePattern → TC Term
-    mapDiag nothing          = return $ `no `λ⦅ [ ("" , vArg?) ] ⦆∅
-    mapDiag (just p@(l , _)) = let k = length l in do
-      typeList ← traverse ⦃ Functor-List ⦄ inferType (applyDownFrom ♯ (length l))
-      return $ quote map' ∙⟦ genPf k (L.map eqFromTerm typeList) ∣ genEquiv k ⟧
+    genBranch : Maybe SinglePattern → TC Term
+    genBranch nothing         = return $ `no `λ⦅ [ ("" , vArg?) ] ⦆∅
+    genBranch (just ([] , _)) = return $ `yes `refl
+    genBranch (just p@(l@(x ∷ xs) , _)) = do
+      typeList ← traverse inferType (applyUpTo ♯ (length l))
+      let eqs = L.map eqFromTerm typeList
+      return $ foldl (λ t eq → genCase eq t) genTrueCase eqs
       where
-        genPf : ℕ → List (Term → Term → Term) → Term
-        genPf k []      = `yes (quote tt ◆)
-        genPf k (n ∷ l) = quote _×-dec_ ∙⟦ genPf k l ∣ n (♯ (length l)) (♯ (length l + k)) ⟧
+        k = ℕ.suc (length xs)
 
-        -- c x1 .. xn ≡ c y1 .. yn ⇔ x1 ≡ y1 .. xn ≡ yn
-        genEquiv : ℕ → Term
-        genEquiv n = quote mk⇔ ∙⟦ `λ⟦ reflPattern n ⇒ `refl ⟧ ∣ `λ⟦ ``refl ⇒ reflTerm n ⟧ ⟧
-          where
-            reflPattern : ℕ → Pattern
-            reflPattern 0       = quote tt ◇
-            reflPattern (suc n) = quote _,_ ◇⟦ reflPattern n ∣ ``refl ⟧
+        vars : NE.List⁺ ℕ
+        vars = 0 NE.∷ applyUpTo ℕ.suc (length xs)
 
-            reflTerm : ℕ → Term
-            reflTerm 0       = quote tt ◆
-            reflTerm (suc n) = quote _,_ ◆⟦ reflTerm n ∣ `refl ⟧
+        -- case (xᵢ ≟ yᵢ) of λ { (false because ...) → no ... ; (true because p) → t }
+        -- since we always add one variable to the scope of t the uncompared terms
+        -- are always at index 2k+1 and k
+        genCase : (Term → Term → Term) → Term → Term
+        genCase _`≟_ t = `case ♯ (2 * k ∸ 1) `≟ ♯ (k ∸ 1) of clauseExprToPatLam (MatchExpr
+          ( (singlePatternFromPattern (vArg (``yes' (` 0))) , inj₂ (just t))
+          ∷ (singlePatternFromPattern (vArg (``no'  (` 0))) , inj₂ (just (`no $
+              -- case ¬p of λ where (ofⁿ ¬p) refl → ¬p refl
+              `case ♯ 0 of clauseExprToPatLam (multiClauseExpr
+                [(     singlePatternFromPattern (vArg (quote ofⁿ ◇⟦ ` 0 ⟧))
+                  NE.∷ singlePatternFromPattern (vArg ``refl) ∷ []
+                  , inj₂ (just ♯ 0 ⟦ `refl ⟧)) ]))))
+          ∷ []))
+
+        -- yes (case p₁ , ... , pₖ of λ where (ofʸ refl , ... , ofʸ refl) → refl)
+        genTrueCase : Term
+        genTrueCase = `yes $
+          `case NE.foldl₁ (quote _,′_ ∙⟦_∣_⟧) (NE.map ♯ vars)
+           of clauseExprToPatLam (MatchExpr
+             [ (singlePatternFromPattern
+                 (vArg (NE.foldl₁ (quote _,_ ◇⟦_∣_⟧) (NE.map (λ _ → quote ofʸ ◇⟦ ``refl ⟧) vars)))
+             , inj₂ (just `refl)) ])
 
     toMapDiag : SinglePattern → SinglePattern → NE.List⁺ SinglePattern × TC (ClauseExpr ⊎ Maybe Term)
     toMapDiag p@(_ , arg _ p₁) p'@(_ , arg _ p₂) =
-      (p NE.∷ [ p' ] , finishMatch (if ⌊ p₁ ≟-Pattern p₂ ⌋ then mapDiag (just p) else mapDiag nothing))
+      (p NE.∷ [ p' ] , finishMatch (if ⌊ p₁ ≟-Pattern p₂ ⌋ then genBranch (just p) else genBranch nothing))
 
 module _ ⦃ _ : TCOptions ⦄ where
   derive-DecEq : List (Name × Name) → UnquoteDecl
