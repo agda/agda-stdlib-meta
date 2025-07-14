@@ -20,6 +20,7 @@ open import Relation.Nullary
 
 open import Reflection.Tactic
 open import Reflection.QuotedDefinitions
+open import Reflection.AST.DeBruijn
 
 open import Class.DecEq.Core
 open import Class.Functor
@@ -31,6 +32,11 @@ open import Tactic.Derive (quote DecEq) (quote _≟_)
 
 
 open ClauseExprM
+
+-- simply typed annotated case_of_, giving better performance than without a type annotation
+-- the type annotation prevents elaboration time from doubling on every argument to a constructor
+`case_returning_of_ : Term → Term → Term → Term
+`case t returning t' of t'' = def (quote case_of_) (hArg? ∷ hArg? ∷ hArg? ∷ hArg t' ∷ vArg t ∷ vArg t'' ∷ [])
 
 private
   instance _ = ContextMonad-MonadTC
@@ -65,10 +71,14 @@ private
     genBranch : Maybe SinglePattern → TC Term
     genBranch nothing         = return $ `no `λ⦅ [ ("" , vArg?) ] ⦆∅
     genBranch (just ([] , _)) = return $ `yes `refl
-    genBranch (just p@(l@(x ∷ xs) , _)) = do
+    genBranch (just p@(l@(x ∷ xs) , arg _ pat)) = do
+      (con n args) ← return pat
+        where _ → error1 "BUG: genBranch"
       typeList ← traverse inferType (applyUpTo ♯ (length l))
-      let eqs = L.map eqFromTerm typeList
-      return $ foldl (λ t eq → genCase eq t) genTrueCase eqs
+      let info = L.zip typeList (downFrom (length l))
+      let ty = quote Dec ∙⟦ con n (applyDownFrom (vArg ∘ ♯ ∘ (_+ length l)) (length l))
+                         `≡ con n (applyDownFrom (vArg ∘ ♯) (length l)) ⟧
+      return $ foldl (λ t (eq , k) → genCase (weaken k ty) (eqFromTerm eq) t) genTrueCase info
       where
         k = ℕ.suc (length xs)
 
@@ -78,8 +88,10 @@ private
         -- case (xᵢ ≟ yᵢ) of λ { (false because ...) → no ... ; (true because p) → t }
         -- since we always add one variable to the scope of t the uncompared terms
         -- are always at index 2k+1 and k
-        genCase : (Term → Term → Term) → Term → Term
-        genCase _`≟_ t = `case ♯ (2 * k ∸ 1) `≟ ♯ (k ∸ 1) of clauseExprToPatLam (MatchExpr
+        genCase : Term → (Term → Term → Term) → Term → Term
+        genCase goalTy _`≟_ t = `case ♯ (2 * k ∸ 1) `≟ ♯ (k ∸ 1)
+          returning goalTy
+          of clauseExprToPatLam (MatchExpr
           ( (singlePatternFromPattern (vArg (``yes' (` 0))) , inj₂ (just t))
           ∷ (singlePatternFromPattern (vArg (``no'  (` 0))) , inj₂ (just (`no $
               -- case ¬p of λ where (ofⁿ ¬p) refl → ¬p refl
@@ -132,6 +144,7 @@ private
 
   unquoteDecl DecEq-R1 = derive-DecEq [ (quote R1 , DecEq-R1) ]
   unquoteDecl DecEq-R2 = derive-DecEq [ (quote R2 , DecEq-R2) ]
+  unquoteDecl DecEq-R20 = derive-DecEq [ (quote R20 , DecEq-R20) ]
 
   unquoteDecl DecEq-M₁ DecEq-M₂ = derive-DecEq $ (quote M₁ , DecEq-M₁) ∷ (quote M₂ , DecEq-M₂) ∷ []
 
