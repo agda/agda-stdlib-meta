@@ -23,7 +23,8 @@ open import Meta.Prelude
 
 open import Agda.Builtin.Reflection using () renaming (primShowQName to showName)
 
-import Data.List as L
+import Data.Bool.ListAction as L
+import Data.List as L hiding (any)
 import Data.List.NonEmpty as NE
 import Data.String as S
 open import Data.Maybe using (fromMaybe)
