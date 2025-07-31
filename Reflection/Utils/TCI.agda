@@ -21,8 +21,6 @@ open import Class.DecEq
 open import Class.Functor
 open import Class.Traversable
 
-instance _ = Functor-M
-
 fresh-level : M Level
 fresh-level = newMeta (quote Level ∙) >>= unquoteTC
 
