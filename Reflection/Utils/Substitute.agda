@@ -28,7 +28,7 @@ mutual
     (lam v t)      → lam v (substAbs x s t)
     (pat-lam _ _)  → unknown  -- ignoring for now
     (pi a b)       → pi (substArg x s a) (substAbs x s b)
-    (agda-sort st) → agda-sort (substSort x s st)
+    (sort st)      → sort (substSort x s st)
     (lit l)        → lit l
     (meta m as)    → meta m (substArgs x s as)
     unknown        → unknown
@@ -75,8 +75,8 @@ module _ (f : ℕ → ℕ) where
         → pat-lam (mapFreeVarsᶜ∗ bound cs) (mapFreeVars∗ bound as)
       (pi (arg i t) (abs x t′))
         → pi (arg i (mapFreeVars bound t)) (abs x (mapFreeVars (suc bound) t′))
-      (agda-sort s)
-        → agda-sort (mapFreeVarsˢ bound s)
+      (sort s)
+        → sort (mapFreeVarsˢ bound s)
       (meta x as)
         → meta x (mapFreeVars∗ bound as)
       t → t

@@ -2,7 +2,7 @@
 module Reflection.Utils.Args where
 
 open import Meta.Prelude
-open import Meta.Init hiding (toℕ)
+open import Meta.Init
 
 open import Data.List using (map; zip)
 open import Data.Fin using (toℕ)

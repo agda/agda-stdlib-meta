@@ -49,6 +49,11 @@ argTys = proj₁ ∘ viewTy′
 resultTy : Type → Type
 resultTy = proj₂ ∘ viewTy′
 
+tyTele : Type → Telescope
+tyTele = λ where
+  (Π[ s ∶ a ] ty) → (s , a) ∷ tyTele ty
+  _ → []
+
 -- ** definitions
 
 record DataDef : Set where
