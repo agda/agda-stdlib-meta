@@ -80,7 +80,7 @@ private
         (pat-lam cs (vArg a ∷ [])) → `case go lvl a of pat-lam (goCls lvl cs) []
         -- ^ use case_of_ for single-argument pattern lambdas (c.f. example 7)
         (pat-lam cs as) → pat-lam (goCls lvl cs) (go∗ lvl as)
-        (agda-sort s) → agda-sort (goSort lvl s)
+        (sort s) → sort (goSort lvl s)
         (meta x as) → meta x (go∗ lvl as)
         t → t
 
