@@ -4,40 +4,39 @@ module Reflection.Syntax where
 
 open import Meta.Prelude
 
-open import Reflection.AST.Argument public
-  hiding (map)
-open import Reflection.AST.Term public
-  hiding (_≟_; getName)
-open import Reflection.AST.Name public
-  hiding (_≟_; _≡ᵇ_; _≈_; _≈?_)
 open import Reflection.AST.Definition public
-  hiding (_≟_)
-open import Reflection.AST.Meta public
-  hiding (_≟_; _≡ᵇ_; _≈_; _≈?_)
+  using (Definition; function; data-type; axiom; record′; constructor′; primitive′)
+open import Reflection.AST.Pattern public
+  using (Pattern; con; dot; var; lit; proj; absurd)
+open import Reflection.AST.Term public
+  using ( Term; pi; var; con; def; lam; pat-lam; sort; lit; meta; unknown
+        ; vLam; hLam; iLam; Π[_∶_]_; vΠ[_∶_]_; hΠ[_∶_]_; iΠ[_∶_]_
+        ; Type; Telescope
+        ; Sort; set; prop; propLit; inf
+        ; Clause; Clauses; clause; absurd-clause
+        )
 open import Reflection.AST.Abstraction public
-  using (unAbs)
-
-open import Agda.Builtin.Reflection public
-  using (ArgInfo; Modality; Visibility; Literal; Meta)
-
+  using (Abs; abs; unAbs)
 open import Reflection.AST.Argument public
-  using (Arg; arg)
+  using (Arg; Args; arg; vArg; hArg; iArg; unArg; _⟨∷⟩_; map-Args)
+open import Reflection.AST.Literal public
+  using (Literal)
+open import Reflection.AST.Meta public
+  using (Meta)
+open import Reflection.AST.Name public
+  using (Name)
 open import Reflection.AST.Argument.Visibility public
   using (Visibility; visible; hidden; instance′)
 open import Reflection.AST.Argument.Information public
   using (ArgInfo; arg-info)
-open import Reflection.AST.Abstraction public
-  using (Abs; abs; unAbs)
-open import Reflection.AST.Argument public
-  using (vArg; hArg; iArg; unArg; _⟨∷⟩_; map-Args)
+open import Reflection.AST.Argument.Modality public
+  using (Modality; modality)
+open import Reflection.AST.Argument.Relevance public
+  using (Relevance; relevant; irrelevant)
 open import Reflection public
-  using ( Name; Meta; Literal; Pattern; Clause
-        ; ErrorPart; strErr
-        ; Term; Type; pi; var; con; def; lam; pat-lam; agda-sort; lit; meta; unknown
-        ; Definition; data-cons; data-type; record-type
-        )
+  using (ErrorPart; strErr)
 
-open import Reflection using (hidden; instance′; TC)
+open import Reflection using (TC)
 
 -- ** Smart constructors
 
@@ -103,7 +102,7 @@ pattern _◇ n = Pattern.con n []
 pattern _◇⟦_⟧ n x = Pattern.con n (vArg x ∷ [])
 pattern _◇⟦_∣_⟧ n x y = Pattern.con n (vArg x ∷ vArg y ∷ [])
 
-pattern `Set = agda-sort (set (quote 0ℓ ∙))
+pattern `Set = sort (set (quote 0ℓ ∙))
 
 -- ** useful type aliases
 PatTelescope = Telescope

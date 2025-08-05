@@ -21,6 +21,7 @@ open import Relation.Nullary
 open import Reflection.Tactic
 open import Reflection.QuotedDefinitions
 open import Reflection.AST.DeBruijn
+open import Reflection.AST.Pattern using () renaming (_≟_ to _≟-Pattern_)
 
 open import Class.DecEq.Core
 open import Class.Functor

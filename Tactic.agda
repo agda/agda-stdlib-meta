@@ -18,6 +18,7 @@ open import Tactic.J public
 open import Tactic.ReduceDec public
 
 open import Tactic.Derive.DecEq public
+open import Tactic.Derive.DecEqFast
 open import Tactic.Derive.Show public
 open import Tactic.Derive.HsType public; open import Tactic.Derive.HsType.Tests
 open import Tactic.Derive.Convertible public
