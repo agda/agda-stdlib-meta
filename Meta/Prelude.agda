@@ -21,7 +21,7 @@ open import Data.Unit public
 open import Data.Sum public
   hiding (assocʳ; assocˡ; map; map₁; map₂; reduce; swap)
 open import Data.Product public
-  hiding (assocʳ; assocˡ; map; map₁; map₂; swap; zip; zipWith)
+  hiding (assocʳ; assocˡ; map; map₁; map₂; swap; zip; zipWith; _<*>_)
 open import Data.Nat public
   hiding (_≟_; _≤_; _≤?_; _<_; _<?_; _≤ᵇ_; _≡ᵇ_)
 open import Data.String public

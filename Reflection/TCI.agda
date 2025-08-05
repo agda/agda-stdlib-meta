@@ -24,13 +24,15 @@ TC : Set ℓ → Set ℓ
 TC = ReaderT TCEnv R.TC
 
 Monad-TC : Monad TC
-Monad-TC = Monad-ReaderT ⦃ Class.Monad.Monad-TC ⦄
+Monad-TC = Monad-ReaderT
 
 MonadReader-TC : MonadReader TCEnv TC ⦃ Monad-TC ⦄
-MonadReader-TC = MonadReader-ReaderT ⦃ Class.Monad.Monad-TC ⦄
+MonadReader-TC = MonadReader-ReaderT
+
+instance _ = Class.MonadError.MonadError-TC
 
 MonadError-TC : MonadError (List ErrorPart) TC
-MonadError-TC = MonadError-ReaderT ⦃ Class.Monad.Monad-TC ⦄ ⦃ Class.MonadError.MonadError-TC ⦄
+MonadError-TC = MonadError-ReaderT
 
 applyReductionOptions : TC A → TC A
 applyReductionOptions x r@record { reduction = onlyReduce red } = R'.withReduceDefs (true ,  red) (x r)
