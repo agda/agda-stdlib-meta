@@ -1,9 +1,9 @@
 {-# OPTIONS --safe --without-K #-}
 
-open import Level
-
 open import Meta.Prelude
 
+open import Class.Functor
+open import Class.Applicative
 open import Class.Monad
 open import Reflection using (TC; ErrorPart; typeError; catchTC; strErr)
 
@@ -25,16 +25,35 @@ MonadError-TC .catch x h = catchTC x (h [ strErr "TC doesn't provide which error
 ErrorT : (E : Set) → (M : ∀ {f} → Set f → Set f) → ∀ {f} → Set f → Set f
 ErrorT E M A = M (E ⊎ A)
 
-module _ {E : Set} {M : ∀ {a} → Set a → Set a} ⦃ _ : Monad M ⦄ where
+import Data.Sum as Sum
 
-  Monad-ErrorT : Monad (ErrorT E M)
+module _ {E : Set} {M : ∀ {a} → Set a → Set a} where
+
+  Functor-ErrorT :  ⦃ _ : Functor M ⦄ → Functor (ErrorT E M)
+  Functor-ErrorT ._<$>_ f = fmap (Sum.map₂ f)
+
+  instance _ =  Functor-ErrorT
+
+  Applicative-ErrorT : ⦃ _ : Applicative M ⦄ → Applicative (ErrorT E M)
+  Applicative-ErrorT .pure a = pure (inj₂ a)
+  Applicative-ErrorT ._<*>_ f x = _<*>_ {F = M} (fmap go f) x
+    where
+    go : (E ⊎ (A → B)) → (E ⊎ A) → (E ⊎ B)
+    go = λ where
+      (inj₁ e) _ → inj₁ e
+      _ (inj₁ e) → inj₁ e
+      (inj₂ f) (inj₂ a) → inj₂ (f a)
+
+  instance _ =  Applicative-ErrorT
+
+  Monad-ErrorT : ⦃ _ : Monad M ⦄ → Monad (ErrorT E M)
   Monad-ErrorT .return a = return (inj₂ a)
   Monad-ErrorT ._>>=_ x f = x >>= λ where
     (inj₁ e) → return (inj₁ e)
     (inj₂ a) → f a
 
-  MonadError-ErrorT : MonadError E (ErrorT E M)
+  instance _ =  Monad-ErrorT
+
+  MonadError-ErrorT : ⦃ _ : Monad M ⦄ → MonadError E (ErrorT E M)
   MonadError-ErrorT .error e = return (inj₁ e)
-  MonadError-ErrorT .catch x h = x >>= λ where
-    (inj₁ e) → h e
-    (inj₂ a) → return (inj₂ a)
+  MonadError-ErrorT .catch x h = x >>= Sum.[ h , return ]

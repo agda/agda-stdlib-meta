@@ -90,7 +90,6 @@ record MonadTC (M : ∀ {f} → Set f → Set f)
     runSpeculative   : M (A × Bool) → M A
     getInstances     : Meta → M (List Term)
 
-  instance _ = Functor-M {M = M}
   open MonadError me
 
   runAndReset : M A → M A
@@ -218,7 +217,6 @@ record MonadTC (M : ∀ {f} → Set f → Set f)
 module _ {M : ∀ {f} → Set f → Set f}
   ⦃ m : Monad M ⦄ ⦃ me : MonadError (List ErrorPart) M ⦄ ⦃ mtc : MonadTC M ⦄ ⦃ mre : MonadReader TCEnv M ⦄ where
 
-  instance _ = Functor-M {M = M}
   open MonadError me
   open MonadTC mtc
   open MonadReader mre

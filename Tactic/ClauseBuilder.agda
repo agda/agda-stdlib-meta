@@ -93,8 +93,6 @@ singlePatternFromPattern (arg i p) =
 
 module _ {M : ∀ {a} → Set a → Set a} ⦃ _ : Monad M ⦄ ⦃ me : MonadError (List ErrorPart) M ⦄ ⦃ mre : MonadReader TCEnv M ⦄ ⦃ _ : MonadTC M ⦄ where
 
-  instance _ = Functor-M {M = M}
-
   ctxSinglePatterns : M (List SinglePattern)
   ctxSinglePatterns = do
     ctx ← getContext
@@ -192,17 +190,14 @@ record ContextMonad (M : ∀ {a} → Set a → Set a) ⦃ _ : Monad M ⦄ : Set�
 
 open ContextMonad ⦃...⦄
 
-Monad-Id : Monad id
-Monad-Id .return = id
-Monad-Id ._>>=_  = flip _$_
-
 -- No context
-ContextMonad-Id : ContextMonad id ⦃ Monad-Id ⦄
-ContextMonad-Id .introPatternM _ a = a
+module _ where
+  open import Class.Monad.Id
+
+  ContextMonad-Id : ContextMonad id
+  ContextMonad-Id .introPatternM _ a = a
 
 module _ {M : ∀ {a} → Set a → Set a} ⦃ _ : Monad M ⦄ ⦃ me : MonadError (List ErrorPart) M ⦄ ⦃ mre : MonadReader TCEnv M ⦄ ⦃ _ : MonadTC M ⦄ where
-
-  instance _ = Functor-M {M = M}
 
   refineWithSingle : (Term → Term) → M Term → M Term
   refineWithSingle ref x = do
@@ -266,8 +261,6 @@ module _ {M : ∀ {a} → Set a → Set a} ⦃ _ : Monad M ⦄ ⦃ me : MonadErr
 
 module ClauseExprM {M : ∀ {a} → Set a → Set a} ⦃ _ : Monad M ⦄ ⦃ _ : ContextMonad M ⦄ where
 
-  instance _ = Functor-M {M = M}
-
   -- Construct a ClauseExpr in M and extend the context appropriately
   matchExprM : List (SinglePattern × M (ClauseExpr ⊎ Maybe Term)) → M ClauseExpr
   matchExprM = _<$>_ MatchExpr ∘ traverse (λ (a , b) → (a ,_) <$> introPatternM a b)
@@ -321,6 +314,8 @@ clauseTelescope (Clause.clause tel _ _) = tel
 clauseTelescope (Clause.absurd-clause tel _) = tel
 
 module _ where
+  open import Class.Monad.Id
+
   open ClauseExprM ⦃ Monad-Id ⦄ ⦃ ContextMonad-Id ⦄
 
   instanciatePattern : SinglePattern → List (Arg Type)
