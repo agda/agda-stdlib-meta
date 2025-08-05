@@ -20,7 +20,7 @@ mutual
     (lam _ (abs _ x)) → findMetas x
     (pat-lam cs as)   → findMetasCl cs ++ findMetas* as
     (pi (arg _ a) (abs _ b)) → findMetas a ++ findMetas b
-    (agda-sort _) → []
+    (sort _)      → []
     (lit _)       → []
     m@(meta x as) → m ∷ findMetas* as
     unknown       → []
@@ -33,5 +33,5 @@ mutual
   findMetasCl : List Clause → List Term
   findMetasCl = λ where
     [] → []
-    (Clause.clause _ _ t ∷ c)      → findMetas t ++ findMetasCl c
-    (Clause.absurd-clause _ _ ∷ c) → findMetasCl c
+    (clause _ _ t      ∷ c) → findMetas t ++ findMetasCl c
+    (absurd-clause _ _ ∷ c) → findMetasCl c

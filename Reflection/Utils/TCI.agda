@@ -78,7 +78,7 @@ ensureNoMetas = λ where
   (lam v (abs _ t)) → ensureNoMetas t
   (pat-lam cs args) → noMetaClauses cs >> noMetaArgs args
   (pi a b) → noMetaArg a >> noMetaAbs b
-  (agda-sort s) → noMetaSort s
+  (sort s) → noMetaSort s
   (lit l) → return _
   -- (meta x _) → errorP "meta found!"
   (meta x _) → blockOnMeta x
@@ -233,7 +233,7 @@ getDataDef n = inDebugPath "getDataDef" do
 
 getRecordDef : Name → M RecordDef
 getRecordDef n = do
-  (record-type c fs) ← getDefinition n
+  (record′ c fs) ← getDefinition n
     where _ → error1 "Not a record definition!"
   args ← proj₁ <$> getType' n
   return (record { name = c ; fields = fs ; params = args })
@@ -260,7 +260,7 @@ getFuel s = do
 
 isSort : Term → M Bool
 isSort t = do
-  (agda-sort _) ← normalise t
+  (sort _) ← normalise t
     where _ → return false
   return true
 
