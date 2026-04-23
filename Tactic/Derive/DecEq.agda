@@ -58,10 +58,10 @@ private
   pattern ``yes' x = quote _because_ ◇⟦ quote true  ◇ ∣ x ⟧
   pattern ``no'  x = quote _because_ ◇⟦ quote false ◇ ∣ x ⟧
 
-  module _ (transName : Name → Maybe Name) where
+  module _ (transName : Term → Maybe Name) where
 
     eqFromTerm : Term → Term → Term → Term
-    eqFromTerm (def n _) t t' with transName n
+    eqFromTerm ty@(def _ _) t t' with transName ty
     ... | just n'     = def (quote _≟_) (iArg (n' ∙) ∷ vArg t ∷ vArg t' ∷ [])
     ... | nothing     = quote _≟_ ∙⟦ t ∣ t' ⟧
     eqFromTerm _ t t' = quote _≟_ ∙⟦ t ∣ t' ⟧
@@ -148,5 +148,9 @@ private
   unquoteDecl DecEq-R20 = derive-DecEq [ (quote R20 , DecEq-R20) ]
 
   unquoteDecl DecEq-M₁ DecEq-M₂ = derive-DecEq $ (quote M₁ , DecEq-M₁) ∷ (quote M₂ , DecEq-M₂) ∷ []
+
+  unquoteDecl DecEq-E5 = derive-DecEq [ (quote E5 , DecEq-E5) ]
+
+  unquoteDecl DecEq-N₁ DecEq-N₂ = derive-DecEq $ (quote N₁ , DecEq-N₁) ∷ (quote N₂ , DecEq-N₂) ∷ []
 
   -- Expected: DecEq-Term DecEq-Product
