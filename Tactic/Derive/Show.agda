@@ -45,9 +45,9 @@ wrapWithPars s = "(" ++S s ++S ")"
 genPars : Term → Term
 genPars t = quote wrapWithPars ∙⟦ t ⟧
 
-module _ (transName : Name → Maybe Name) where
+module _ (transName : Term → Maybe Name) where
   showFromTerm : Term → Term → Term
-  showFromTerm (def n _) t with transName n
+  showFromTerm ty@(def _ _) t with transName ty
   ... | just n'    = def (quote show) (iArg (n' ∙) ∷ vArg t ∷ [])
   ... | nothing    = quote show ∙⟦ t ⟧
   showFromTerm _ t = quote show ∙⟦ t ⟧
@@ -91,5 +91,9 @@ private
     ((quote R1 , Show-R1) ∷ (quote R2 , Show-R2) ∷ [])
 
   unquoteDecl Show-M₁ Show-M₂ = derive-Show $ (quote M₁ , Show-M₁) ∷ (quote M₂ , Show-M₂) ∷ []
+
+  unquoteDecl Show-E5 = derive-Show [ (quote E5 , Show-E5) ]
+
+  unquoteDecl Show-N₁ Show-N₂ = derive-Show $ (quote N₁ , Show-N₁) ∷ (quote N₂ , Show-N₂) ∷ []
 
   -- Expected: Show-Product Show-Term

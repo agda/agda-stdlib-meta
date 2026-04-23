@@ -30,6 +30,10 @@ data E4 : {n : ℕ} → Fin n → Set where
   c1E4 : ∀ {k} → E4 {suc k} zero
   c2E4 : ∀ {k} {l} → E4 {suc k} (suc l)
 
+data E5 : Set where
+  c1E5 : List (Maybe E5) → E5
+  c2E5 : E5
+
 record R1 : Set where
   field f1R1 : E1
         f2R1 : E2 ℕ
@@ -54,8 +58,21 @@ data M₂ where
   m₂ : M₂
   m₁→₂ : M₁ → M₂
 
+-- Like M₁/M₂ but N₁ wraps N₂ in a List.
+-- This exercises cross-seed wrapper chains: when deriving for both seeds
+-- together the helper `DecEq-List-N₂` (or `Show-List-N₂`) lands in the
+-- same mutual group, making termination visible to Agda.
+data N₁ : Set
+data N₂ : Set
+data N₁ where
+  n₁  : N₁
+  n₂→₁ : List N₂ → N₁
+data N₂ where
+  n₂  : N₂
+  n₁→₂ : N₁ → N₂
+
 AllTestTypes : List Name
-AllTestTypes = quote E0 ∷ quote E1 ∷ quote E2 ∷ quote E3 ∷ quote R1 ∷ quote R2 ∷ quote M₁ ∷ quote M₂ ∷ []
+AllTestTypes = quote E0 ∷ quote E1 ∷ quote E2 ∷ quote E3 ∷ quote R1 ∷ quote R2 ∷ quote M₁ ∷ quote M₂ ∷ quote E5 ∷ []
 
 open import Data.Bool using (Bool) public
 open import Data.Char using (Char) public
