@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: omelkonian/setup-agda@v2.3
+      - uses: omelkonian/setup-agda@main
         with:
           agda-version: 2.8.0
           stdlib-version: 2.3
