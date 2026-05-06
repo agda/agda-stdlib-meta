@@ -250,3 +250,61 @@ private
 
   test₃ : ∀ {x y : ℕ} → (x + 0) + (0 + y) ≡ x + y
   test₃ = simp (quote +-identityˡ ∷ quote +-identityʳ ∷ [])
+
+  -- Multiple applications of the same rule
+  test₄ : ∀ {x : ℕ} → x + 0 + 0 ≡ x
+  test₄ = simp (quote +-identityʳ ∷ [])
+
+  -- Simplification in a non-leftmost argument (tryArgs skips the inert x)
+  test₅ : ∀ {x y : ℕ} → x + (y + 0) ≡ x + y
+  test₅ = simp (quote +-identityʳ ∷ [])
+
+  -- Only the RHS needs simplification (result is sym p₂)
+  test₆ : ∀ {x : ℕ} → x ≡ x + 0
+  test₆ = simp (quote +-identityʳ ∷ [])
+
+  -- Different operator
+  test₇ : ∀ {x : ℕ} → x * 1 ≡ x
+  test₇ = simp (quote *-identityʳ ∷ [])
+
+  -- Each argument simplified by a different rule
+  test₈ : ∀ {x y : ℕ} → (x * 1) + (0 + y) ≡ x + y
+  test₈ = simp (quote *-identityʳ ∷ quote +-identityˡ ∷ [])
+
+  -- Top-level rule exposes a new redex in the result
+  test₉ : ∀ {x : ℕ} → (x + 0) * 1 ≡ x
+  test₉ = simp (quote *-identityʳ ∷ quote +-identityʳ ∷ [])
+
+  -- Three-rule chain: zero-annihilation, then identity, then identity
+  test₁₀ : ∀ {x y : ℕ} → (x + y) * 0 + x * 1 ≡ x
+  test₁₀ = simp (quote *-zeroʳ ∷ quote *-identityʳ ∷ quote +-identityˡ ∷ [])
+
+  -- Trivial goal: both sides return refl and unifyWithGoal refl succeeds
+  test₁₁ : ∀ {x : ℕ} → x ≡ x
+  test₁₁ = simp []
+
+  -- Simplification two levels deep inside an argument
+  test₁₂ : ∀ {x y z : ℕ} → (x + 0) + ((y + 0) + z) ≡ x + (y + z)
+  test₁₂ = simp (quote +-identityʳ ∷ [])
+
+  -- Left-associativity flattening in two top-level steps
+  test₁₃ : ∀ {a b c d : ℕ} → ((a + b) + c) + d ≡ a + (b + (c + d))
+  test₁₃ = simp (quote +-assoc ∷ [])
+
+  -- ** Known limitations **
+  --
+  -- 1. Commutative rules cause divergence.
+  --    +-comm rewrites x + y → y + x → x + y → ... and after 100 steps (even)
+  --    the two normal forms are x + y and y + x respectively, which do not unify.
+  --    FAILS: simp (quote +-comm ∷ []) for  x + y ≡ y + x
+  --
+  -- 2. Rewriting under binders is not implemented (see TODO at top).
+  --    simpAll only recurses into def/con; lam nodes are opaque.
+  --    FAILS: simp (quote +-identityʳ ∷ []) for  (λ x → x + 0) ≡ id
+  --
+  -- 3. Local hypotheses cannot be passed to simp; only global Names are accepted.
+  --    FAILS: using  h : x ≡ 0  to prove  x + x ≡ 0
+  --
+  -- 4. Conditional equations are not supported.
+  --    preprocessDict strips all pi-types including hypothesis arrows, so only
+  --    unconditional equations  ∀ x₁ … xₙ → lhs ≡ rhs  work correctly.
