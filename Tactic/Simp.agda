@@ -70,6 +70,12 @@ private
   isRefl (con n []) = n == quote refl
   isRefl _          = false
 
+  -- Rewriting under lambdas requires function extensionality, which is not
+  -- provable in intensional MLTT without an axiom.
+  postulate
+    funext : {X : Set ℓ} {Y : X → Set ℓ′} {f g : ∀ x → Y x}
+           → (∀ x → f x ≡ g x) → f ≡ g
+
 -- ** Matching
 
 -- Try to unify term t with the template (which has freeVars free variables).
@@ -161,7 +167,8 @@ tryRule d t = do
   return (just (rhs , proof))
 
 mutual
-  -- Try to simplify t at the top level or in a direct argument of a def/con.
+  -- Try to simplify t at the top level, in a direct argument of a def/con,
+  -- or under a lambda binder.
   -- Returns (t', proof : t ≡ t') if t simplifies, nothing otherwise.
   simpAll : EqDict → Term → TC (Maybe (Term × Term))
   simpAll d t = do
@@ -169,9 +176,22 @@ mutual
     case result of λ where
       (just r) → return (just r)
       nothing  → case t of λ where
-        (def f as) → simpInArgs true  f as d
-        (con c as) → simpInArgs false c as d
-        _          → return nothing
+        (def f as)        → simpInArgs true  f as d
+        (con c as)        → simpInArgs false c as d
+        (lam v (abs x b)) → simpUnderLam d v x b
+        _                 → return nothing
+
+  -- Simplify under a lambda binder by entering the extended context,
+  -- then wrap the resulting proof with funext.
+  simpUnderLam : EqDict → Visibility → String → Term → TC (Maybe (Term × Term))
+  simpUnderLam d v x b = do
+    pi argTy _ ← inferType (lam v (abs x b))
+      where _ → return nothing
+    result ← extendContext (x , argTy) (simpAll d b)
+    case result of λ where
+      nothing       → return nothing
+      just (b' , p) → return (just ( lam v (abs x b')
+                                   , quote funext ∙⟦ lam v (abs x p) ⟧))
 
   -- Try to simplify an argument of (def/con f args).
   -- Returns (newTerm, proof : (def/con f args) ≡ newTerm) if any arg simplifies.
@@ -291,6 +311,14 @@ private
   test₁₃ : ∀ {a b c d : ℕ} → ((a + b) + c) + d ≡ a + (b + (c + d))
   test₁₃ = simp (quote +-assoc ∷ [])
 
+  -- Rewriting under a lambda (uses funext postulate)
+  testLam₁ : (λ (x : ℕ) → x + 0) ≡ (λ (x : ℕ) → x)
+  testLam₁ = simp (quote +-identityʳ ∷ [])
+
+  -- Rewriting under a lambda that closes over an outer variable
+  testLam₂ : ∀ (n : ℕ) → (λ (x : ℕ) → x + n + 0) ≡ (λ (x : ℕ) → x + n)
+  testLam₂ n = simp (quote +-identityʳ ∷ [])
+
   -- ** Known limitations **
   --
   -- 1. Commutative rules cause divergence.
@@ -298,13 +326,9 @@ private
   --    the two normal forms are x + y and y + x respectively, which do not unify.
   --    FAILS: simp (quote +-comm ∷ []) for  x + y ≡ y + x
   --
-  -- 2. Rewriting under binders is not implemented (see TODO at top).
-  --    simpAll only recurses into def/con; lam nodes are opaque.
-  --    FAILS: simp (quote +-identityʳ ∷ []) for  (λ x → x + 0) ≡ id
-  --
-  -- 3. Local hypotheses cannot be passed to simp; only global Names are accepted.
+  -- 2. Local hypotheses cannot be passed to simp; only global Names are accepted.
   --    FAILS: using  h : x ≡ 0  to prove  x + x ≡ 0
   --
-  -- 4. Conditional equations are not supported.
+  -- 3. Conditional equations are not supported.
   --    preprocessDict strips all pi-types including hypothesis arrows, so only
   --    unconditional equations  ∀ x₁ … xₙ → lhs ≡ rhs  work correctly.
