@@ -133,6 +133,27 @@ findAndUnify d ty = do
 extractRewrite : Equation isInst → TC Term
 extractRewrite record { name = n ; args = xs } = applyWithVisibility n xs
 
+-- ** Extensible dictionaries
+
+-- To build an extensible simp dictionary, declare a dummy type:
+--   data MyDict : Set where
+-- then register rules via instance declarations:
+--   instance myRule : Simp MyDict; myRule = mkSimp (quote myLemma)
+record Simp (D : Set) : Set where
+  constructor mkSimp
+  field ruleName : Name
+
+private
+  getDictNames : Term → TC (List Name)
+  getDictNames dictTy = do
+    insts ← findInstances (def (quote Simp) (vArg dictTy ∷ []))
+    traverse extractName insts
+    where
+      extractName : Term → TC Name
+      extractName inst = do
+        t ← normalise (def (quote Simp.ruleName) (hArg unknown ∷ vArg inst ∷ []))
+        unquoteTC t
+
 -- ** Simplification
 
 -- Build the congruence lambda: λ ◆ → (def/con f args)[args[i] ↦ ◆]
@@ -248,6 +269,12 @@ macro
   simp : List Name → Tactic
   simp names = initTacOpts (simpTactic names) defaultTCOptions
 
+  simpD : (D : Set) → Tactic
+  simpD D = initTacOpts (do
+    dictTy ← quoteTC D
+    names  ← getDictNames dictTy
+    simpTactic names) defaultTCOptions
+
 -- ** Tests
 
 private
@@ -313,6 +340,30 @@ private
   -- Rewriting under mixed explicit and implicit binders
   testBinder₃ : ∀ (m : ℕ) {n : ℕ} → (m + 0) + (0 + n) ≡ m + n
   testBinder₃ = simp (quote +-identityˡ ∷ quote +-identityʳ ∷ [])
+
+  -- ** simpD: extensible dictionary tests **
+
+  data ArithRules : Set where
+
+  instance
+    arith-assoc  : Simp ArithRules
+    arith-identᵣ : Simp ArithRules
+    arith-identˡ : Simp ArithRules
+    arith-assoc  = mkSimp (quote +-assoc)
+    arith-identᵣ = mkSimp (quote +-identityʳ)
+    arith-identˡ = mkSimp (quote +-identityˡ)
+
+  -- Basic rule from dictionary
+  testDict₁ : ∀ {x : ℕ} → x + 0 ≡ x
+  testDict₁ = simpD ArithRules
+
+  -- Multiple rules from dictionary
+  testDict₂ : ∀ {x y : ℕ} → (x + 0) + (0 + y) ≡ x + y
+  testDict₂ = simpD ArithRules
+
+  -- Associativity from dictionary
+  testDict₃ : ∀ {a b c d : ℕ} → ((a + b) + c) + d ≡ a + (b + (c + d))
+  testDict₃ = simpD ArithRules
 
   -- ** Known limitations **
   --
