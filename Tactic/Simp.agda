@@ -1,9 +1,9 @@
 -- TODO: support goals other than equalities (e.g., boolean goals via decide)
--- TODO: rewrite under binders
 
 -- Currently requires `--lossy-unification`. To drop that requirement we'd need
 -- to implement our own unification (or ask Agda for a lossy `unify` primitive).
 
+{-# OPTIONS --safe #-}
 {-# OPTIONS -v allTactics:100 #-}
 {-# OPTIONS --lossy-unification #-}
 
@@ -35,7 +35,7 @@ open import Meta.Prelude
 open import Reflection.QuotedDefinitions
 open import Reflection.Tactic
 open import Reflection.Utils hiding (args)
-open import Reflection.Utils.TCI using (applyWithVisibility)
+open import Reflection.Utils.TCI using (applyWithVisibility; unifyStrict)
 
 open import Class.Monoid
 open import Class.Monad
@@ -69,12 +69,6 @@ private
   isRefl : Term → Bool
   isRefl (con n []) = n == quote refl
   isRefl _          = false
-
-  -- Rewriting under lambdas requires function extensionality, which is not
-  -- provable in intensional MLTT without an axiom.
-  postulate
-    funext : {X : Set ℓ} {Y : X → Set ℓ′} {f g : ∀ x → Y x}
-           → (∀ x → f x ≡ g x) → f ≡ g
 
 -- ** Matching
 
@@ -167,8 +161,7 @@ tryRule d t = do
   return (just (rhs , proof))
 
 mutual
-  -- Try to simplify t at the top level, in a direct argument of a def/con,
-  -- or under a lambda binder.
+  -- Try to simplify t at the top level or in a direct argument of a def/con.
   -- Returns (t', proof : t ≡ t') if t simplifies, nothing otherwise.
   simpAll : EqDict → Term → TC (Maybe (Term × Term))
   simpAll d t = do
@@ -176,22 +169,9 @@ mutual
     case result of λ where
       (just r) → return (just r)
       nothing  → case t of λ where
-        (def f as)        → simpInArgs true  f as d
-        (con c as)        → simpInArgs false c as d
-        (lam v (abs x b)) → simpUnderLam d v x b
-        _                 → return nothing
-
-  -- Simplify under a lambda binder by entering the extended context,
-  -- then wrap the resulting proof with funext.
-  simpUnderLam : EqDict → Visibility → String → Term → TC (Maybe (Term × Term))
-  simpUnderLam d v x b = do
-    pi argTy _ ← inferType (lam v (abs x b))
-      where _ → return nothing
-    result ← extendContext (x , argTy) (simpAll d b)
-    case result of λ where
-      nothing       → return nothing
-      just (b' , p) → return (just ( lam v (abs x b')
-                                   , quote funext ∙⟦ lam v (abs x p) ⟧))
+        (def f as) → simpInArgs true  f as d
+        (con c as) → simpInArgs false c as d
+        _          → return nothing
 
   -- Try to simplify an argument of (def/con f args).
   -- Returns (newTerm, proof : (def/con f args) ≡ newTerm) if any arg simplifies.
@@ -235,18 +215,29 @@ simpIter (suc n) d t = do
 
 -- ** The simp tactic
 
--- Simplifies both sides of an equality goal using the given lemmas.
--- Proves lhs ≡ rhs when both sides simplify to a common term.
+-- Simplifies the goal, recursing under ∀ binders and proving the resulting
+-- equality by simplifying both sides to a common normal form.
 simpTactic : List Name → ITactic
 simpTactic names = do
-  d  ← preprocessDict names
-  ty ← goalTy >>= reduce
-  (lhs ``≡ rhs) ← return ty
-    where _ → error1 "simp: goal is not a propositional equality"
-  (_ , p1) ← simpIter 100 d lhs
-  (_ , p2) ← simpIter 100 d rhs
-  unifyWithGoal (buildProof p1 p2)
+  d ← preprocessDict names
+  simpGoal d
   where
+    simpGoal : EqDict → ITactic
+    simpGoal d = do
+      hole ← goalHole
+      ty   ← inferType hole >>= reduce
+      case ty of λ where
+        (pi argTy@(arg (arg-info v _) _) (abs x bodyTy)) → do
+          hole′ ← extendContext (x , argTy) (newMeta bodyTy)
+          unifyStrict (hole , ty) (lam v (abs x hole′))
+          extendContext (x , argTy) (runWithHole hole′ (simpGoal d))
+        _ → do
+          (lhs ``≡ rhs) ← return ty
+            where _ → error1 "simp: goal is not a propositional equality"
+          (_ , p1) ← simpIter 100 d lhs
+          (_ , p2) ← simpIter 100 d rhs
+          unifyWithGoal (buildProof p1 p2)
+
     buildProof : Term → Term → Term
     buildProof p1 p2 =
       if isRefl p1
@@ -311,13 +302,17 @@ private
   test₁₃ : ∀ {a b c d : ℕ} → ((a + b) + c) + d ≡ a + (b + (c + d))
   test₁₃ = simp (quote +-assoc ∷ [])
 
-  -- Rewriting under a lambda (uses funext postulate)
-  testLam₁ : (λ (x : ℕ) → x + 0) ≡ (λ (x : ℕ) → x)
-  testLam₁ = simp (quote +-identityʳ ∷ [])
+  -- Rewriting under an explicit ∀ binder
+  testBinder₁ : ∀ (n : ℕ) → n + 0 ≡ n
+  testBinder₁ = simp (quote +-identityʳ ∷ [])
 
-  -- Rewriting under a lambda that closes over an outer variable
-  testLam₂ : ∀ (n : ℕ) → (λ (x : ℕ) → x + n + 0) ≡ (λ (x : ℕ) → x + n)
-  testLam₂ n = simp (quote +-identityʳ ∷ [])
+  -- Rewriting under an implicit ∀ binder
+  testBinder₂ : ∀ {n : ℕ} → n + 0 ≡ n
+  testBinder₂ = simp (quote +-identityʳ ∷ [])
+
+  -- Rewriting under mixed explicit and implicit binders
+  testBinder₃ : ∀ (m : ℕ) {n : ℕ} → (m + 0) + (0 + n) ≡ m + n
+  testBinder₃ = simp (quote +-identityˡ ∷ quote +-identityʳ ∷ [])
 
   -- ** Known limitations **
   --
