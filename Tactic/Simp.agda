@@ -32,6 +32,7 @@ open import Relation.Binary.PropositionalEquality
 
 open import Meta.Init
 open import Meta.Prelude
+open import Reflection.AlphaEquality
 open import Reflection.QuotedDefinitions
 open import Reflection.Tactic
 open import Reflection.Utils hiding (args)
@@ -46,11 +47,16 @@ open MonadError ⦃...⦄
 -- ** Private helpers
 
 private
-  -- Replace the element at position i using a function
-  updateAt : ℕ → (A → A) → List A → List A
-  updateAt _       _ []       = []
-  updateAt zero    f (x ∷ xs) = f x ∷ xs
-  updateAt (suc i) f (x ∷ xs) = x ∷ updateAt i f xs
+  -- stdlib 2.3 has updateAt : List A → Fin (length xs) → (A → A) → List A
+  -- which differs from the ℕ-indexed version we need here.
+  updateAtℕ : ℕ → (A → A) → List A → List A
+  updateAtℕ _       _ []       = []
+  updateAtℕ zero    f (x ∷ xs) = f x ∷ xs
+  updateAtℕ (suc i) f (x ∷ xs) = x ∷ updateAtℕ i f xs
+
+  -- Replace the value inside an Arg, preserving its ArgInfo.
+  setArgValue : Term → Arg Term → Arg Term
+  setArgValue t (arg i _) = arg i t
 
   _`$_ : Term → Term → Term
   t `$ t' = quote _$_ ∙⟦ t ∣ t' ⟧
@@ -108,26 +114,11 @@ preprocessDict = traverse genEq
     genEq : Name → TC (Equation notInst)
     genEq n = do
       ty ← getType n >>= reduce
-      (def (quote _≡_) (hArg _ ∷ hArg _ ∷ vArg lhs ∷ vArg rhs ∷ []) , numArgs) ←
-        return (removePis ty)
-        where (ty , _) →
-          error1 ("Error while preprocessing simp dict: Not an equation: " <+> show ty)
-      return record { lhs = lhs ; rhs = rhs ; name = n ; args = numArgs }
-
--- Find the first matching rule in the dictionary
-findAndUnify : EqDict → Term → TC (Maybe (Equation isInst))
-findAndUnify d ty = do
-  ty ← reduce ty
-  res ← traverse
-    (λ where eq@record { args = n ; lhs = lhs } →
-        matchTerms n ty lhs >>= return ∘ (_, eq)) d
-  return (head (extractMatch res))
-  where
-    extractMatch : List (Maybe (List Term) × Equation notInst) → List (Equation isInst)
-    extractMatch []                     = []
-    extractMatch ((just xs , eq) ∷ l)  =
-      record { Equation eq ; args = xs } ∷ extractMatch l
-    extractMatch ((nothing  , _) ∷ l)  = extractMatch l
+      case removePis ty of λ where
+        (def (quote _≡_) (hArg _ ∷ hArg _ ∷ vArg lhs ∷ vArg rhs ∷ []) , numArgs) →
+          return record { lhs = lhs ; rhs = rhs ; name = n ; args = numArgs }
+        (ty' , _) →
+          error1 ("Error while preprocessing simp dict: Not an equation: " <+> show ty')
 
 -- Apply an instantiated equation to produce the proof term
 extractRewrite : Equation isInst → TC Term
@@ -152,7 +143,7 @@ private
   getDictNames : Term → TC (List Name)
   getDictNames dictTy = do
     insts ← findInstances (def (quote Simp) (vArg dictTy ∷ []))
-    traverse extractDictName insts
+    sequence (map extractDictName insts)
 
 -- ** Simplification
 
@@ -161,25 +152,40 @@ private
 buildCongLambda : Bool → Name → Args Term → ℕ → Term
 buildCongLambda isDef f args i =
   let shiftedArgs = map-Args (mapVars suc) args
-      newArgs     = updateAt i (λ (arg info _) → arg info (var 0 [])) shiftedArgs
+      newArgs     = updateAtℕ i (setArgValue (var 0 [])) shiftedArgs
       body        = if isDef then def f newArgs else con f newArgs
   in `λ "◆" ⇒ body
 
 private
-  extractEqRhs : Term → TC Term
-  extractEqRhs (_ ``≡ rhs) = return rhs
-  extractEqRhs ty = error1 ("Expected equality type, got: " <+> show ty)
+  -- Try one rule; wraps in runSpeculative so that any committed constraints
+  -- from matchTerms's unify are rolled back if the alpha-equality guard fails.
+  tryOneRule : Term → Term → Equation notInst → TC (Maybe (Term × Term) × Bool)
+  tryOneRule orig t' eq = do
+    just metas ← matchTerms (Equation.args eq) t' (Equation.lhs eq)
+      where nothing → return (nothing , false)
+    proof ← extractRewrite (record { Equation eq ; args = metas })
+    ty    ← inferType proof
+    (lhs' ``≡ rhs') ← return ty
+      where _ → return (nothing , false)
+    if lhs' =α= orig
+      then return (just (rhs' , proof) , true)
+      else return (nothing , false)
+
+  -- Iterate through the dict; try each rule with full rollback on failure.
+  tryRuleStep : Term → Term → EqDict → TC (Maybe (Term × Term))
+  tryRuleStep _    _  []           = return nothing
+  tryRuleStep orig t' (eq ∷ eqs)   = do
+    just r ← runSpeculative (tryOneRule orig t' eq)
+      where nothing → tryRuleStep orig t' eqs
+    return (just r)
 
 -- Try a top-level rule match on t.
--- Returns (rhs, proof : t ≡ rhs) if a rule applies.
+-- Iterates through all rules; validates each candidate via alpha-equality
+-- to filter spurious matches produced by --lossy-unification.
 tryRule : EqDict → Term → TC (Maybe (Term × Term))
 tryRule d t = do
-  just eq ← findAndUnify d t
-    where nothing → return nothing
-  proof ← extractRewrite eq
-  ty    ← inferType proof >>= normalise
-  rhs   ← extractEqRhs ty
-  return (just (rhs , proof))
+  t' ← reduce t
+  tryRuleStep t t' d
 
 mutual
   -- Try to simplify t at the top level or in a direct argument of a def/con.
@@ -202,7 +208,7 @@ mutual
     case result of λ where
       nothing → return nothing
       (just (i , a' , proof)) →
-        let newArgs = updateAt i (λ (arg info _) → arg info a') args
+        let newArgs = updateAtℕ i (setArgValue a') args
             newTerm = if isDef then def f newArgs else con f newArgs
             lambda  = buildCongLambda isDef f args i
         in return (just (newTerm , quote cong ∙⟦ lambda ∣ proof ⟧))
@@ -232,38 +238,41 @@ simpIter (suc n) d t = do
     (just (t' , step)) → do
       (t'' , rest) ← simpIter n d t'
       -- Avoid trans _ refl
-      return (t'' , if isRefl rest then step else quote trans ∙⟦ step ∣ rest ⟧)
+      return (t'' , (if isRefl rest then step else quote trans ∙⟦ step ∣ rest ⟧))
 
 -- ** The simp tactic
+
+private
+  buildProof : Term → Term → Term
+  buildProof p1 p2 =
+    if isRefl p1
+      then (if isRefl p2 then `refl else quote sym ∙⟦ p2 ⟧)
+      else (if isRefl p2 then p1 else quote trans ∙⟦ p1 ∣ quote sym ∙⟦ p2 ⟧ ⟧)
+
+  -- Recurse under ∀ binders (fuel bounds the number of binders).
+  simpGoal : ℕ → EqDict → ITactic
+  simpGoal 0       _ = error1 "simp: goal has too many binders"
+  simpGoal (suc n) d = do
+    hole ← goalHole
+    ty   ← inferType hole >>= reduce
+    case ty of λ where
+      (pi argTy@(arg (arg-info v _) _) (abs x bodyTy)) → do
+        hole′ ← extendContext (x , argTy) (newMeta bodyTy)
+        unifyStrict (hole , ty) (lam v (abs x hole′))
+        extendContext (x , argTy) (runWithHole hole′ (simpGoal n d))
+      _ → do
+        (lhs ``≡ rhs) ← return ty
+          where _ → error1 "simp: goal is not a propositional equality"
+        (_ , p1) ← simpIter 100 d lhs
+        (_ , p2) ← simpIter 100 d rhs
+        unifyWithGoal (buildProof p1 p2)
 
 -- Simplifies the goal, recursing under ∀ binders and proving the resulting
 -- equality by simplifying both sides to a common normal form.
 simpTactic : List Name → ITactic
 simpTactic names = do
   d ← preprocessDict names
-  simpGoal d
-  where
-    simpGoal : EqDict → ITactic
-    simpGoal d = do
-      hole ← goalHole
-      ty   ← inferType hole >>= reduce
-      case ty of λ where
-        (pi argTy@(arg (arg-info v _) _) (abs x bodyTy)) → do
-          hole′ ← extendContext (x , argTy) (newMeta bodyTy)
-          unifyStrict (hole , ty) (lam v (abs x hole′))
-          extendContext (x , argTy) (runWithHole hole′ (simpGoal d))
-        _ → do
-          (lhs ``≡ rhs) ← return ty
-            where _ → error1 "simp: goal is not a propositional equality"
-          (_ , p1) ← simpIter 100 d lhs
-          (_ , p2) ← simpIter 100 d rhs
-          unifyWithGoal (buildProof p1 p2)
-
-    buildProof : Term → Term → Term
-    buildProof p1 p2 =
-      if isRefl p1
-        then (if isRefl p2 then `refl else quote sym ∙⟦ p2 ⟧)
-        else (if isRefl p2 then p1 else quote trans ∙⟦ p1 ∣ quote sym ∙⟦ p2 ⟧ ⟧)
+  simpGoal 100 d
 
 macro
   simp : List Name → Tactic
