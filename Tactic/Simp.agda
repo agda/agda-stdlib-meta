@@ -144,15 +144,15 @@ record Simp (D : Set) : Set where
   field ruleName : Name
 
 private
+  extractDictName : Term → TC Name
+  extractDictName inst = do
+    t ← normalise (def (quote Simp.ruleName) (hArg unknown ∷ vArg inst ∷ []))
+    unquoteTC t
+
   getDictNames : Term → TC (List Name)
   getDictNames dictTy = do
     insts ← findInstances (def (quote Simp) (vArg dictTy ∷ []))
-    traverse extractName insts
-    where
-      extractName : Term → TC Name
-      extractName inst = do
-        t ← normalise (def (quote Simp.ruleName) (hArg unknown ∷ vArg inst ∷ []))
-        unquoteTC t
+    traverse extractDictName insts
 
 -- ** Simplification
 
