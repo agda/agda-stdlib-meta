@@ -22,3 +22,6 @@ open import Tactic.Derive.DecEqFast
 open import Tactic.Derive.Show public
 open import Tactic.Derive.HsType public; open import Tactic.Derive.HsType.Tests
 open import Tactic.Derive.Convertible public
+
+open import Tactic.Solver.Ring
+open import Tactic.Solver.Ring.Tests
