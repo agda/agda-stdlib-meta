@@ -23,11 +23,13 @@
 module Tactic.Simp.Witness where
 
 open import Data.Bool                using (Bool; true; false)
-open import Data.List                using (List; []; _∷_; _++_)
+open import Data.List as L                using (List; []; _∷_; _++_)
+open import Data.List.Properties     using (++-identityʳ; length-map)
 open import Data.Nat                 using (ℕ; zero; suc; _+_; _*_)
 open import Data.Nat.Properties
   using (+-identityʳ; +-identityˡ; *-identityʳ; *-identityˡ)
 open import Data.Product             using (_×_; _,_; Σ; proj₂)
+open import Data.Unit                using (⊤; tt)
 open import Relation.Binary.PropositionalEquality
   using (_≡_; refl; cong; cong₂; trans; sym)
 
@@ -290,25 +292,99 @@ reify f (rule a)   = f a
 ∙-rfl-r (rule _)   = refl
 
 ----------------------------------------------------------------
--- 9. Reasoning chains over ℕ, with greedy discovery
+-- 9. Generic, multi-sorted expression language
 --
--- We instantiate the typed-Chain machinery on natural-number identity
--- lemmas.  The richer atom set covers `+-identity{ʳ,ˡ}`, `*-identity
--- {ʳ,ˡ}`, and congruence through `suc`.
+-- To support multi-sorted setups (where terms of different "kinds"
+-- coexist — e.g. `ℕ` and `List A` and `List B` in the same chain) the
+-- symbolic expression language is parameterised by a *many-sorted*
+-- signature.  A signature specifies a set of sorts, a set of operation
+-- symbols, and for each symbol an input-sort list (its domain) and an
+-- output sort.  Single-sorted setups are the special case `Sort = ⊤`.
+----------------------------------------------------------------
+
+-- Heterogeneous, sort-indexed argument vector.  In a single-sorted
+-- setup the indices are all `tt`; in a multi-sorted setup each
+-- position has its own required sort.
+data Args {S : Set} (E : S → Set) : List S → Set where
+  ε   : Args E []
+  _◂_ : ∀ {s ss} → E s → Args E ss → Args E (s ∷ ss)
+infixr 5 _◂_
+
+-- A many-sorted algebraic signature.  Each operation symbol carries
+-- both its input sorts (a `List Sort`) and its output sort in its
+-- type, so `Op Σ args s` is the set of operations with input profile
+-- `args` and codomain `s`.  This avoids a non-injective `codom`
+-- function and lets dependent pattern matching on `Expr Σ s` proceed
+-- cleanly even when multiple operations share the same codomain.
+record Signature : Set₁ where
+  field
+    Sort : Set
+    Op   : List Sort → Sort → Set
+open Signature public
+
+-- The generic expression language: sort-indexed variables and
+-- operation applications.  `Expr Σ s` is a term of sort `s`.
+data Expr (Σ : Signature) : Sort Σ → Set where
+  var   : ∀ {s} → ℕ → Expr Σ s
+  apply : ∀ {args s} → Op Σ args s → Args (Expr Σ) args → Expr Σ s
+
+----------------------------------------------------------------
+-- 10. Reasoning chains and greedy discovery
 --
--- A small symbolic expression language `Expr` represents terms with
--- placeholder variables.  A pure recursive `greedy` algorithm searches
--- an `Expr` top-down, applying the leftmost applicable rule and
--- recursing on the simplified form.  Its output is a *typed* `Chain`
--- whose source and target are precisely the `⟦_⟧`-evaluated original
--- and reduced expressions.  No reflection, no macros — the algorithm
--- is a total recursive function whose result type is the proof.
+-- Three example signatures share the generic `Expr` and the same
+-- `Chain` / `reify` machinery from §8:
+--
+--   §10a. `ℕ-sig` — single-sorted (`Sort = ⊤`):  every term is a `ℕ`.
+--   §10b. `L-sig` — single-sorted:               every term is a `List A`.
+--   §10c. `M-sig` — multi-sorted:                `List A`, `List B`, `ℕ`
+--                                                coexist in one chain.
 ----------------------------------------------------------------
 
 private
 
-  -- Extended atom set.  Each constructor names a specific rewrite rule
-  -- with explicit endpoints.  `inSuc` lifts an atom through `suc`.
+  ----------------------------------------------------------------
+  -- 10a. Reasoning over `ℕ`  (single-sorted, `Sort = ⊤`)
+  ----------------------------------------------------------------
+
+  -- `NatOp args s` is the set of ℕ-operations with arity-profile
+  -- `args` and codomain `s`; here `s` is always `tt` (single-sorted).
+  data NatOp : List ⊤ → ⊤ → Set where
+    ZERO ONE : NatOp [] tt
+    SUC      : NatOp (tt ∷ []) tt
+    ADD MUL  : NatOp (tt ∷ tt ∷ []) tt
+
+  ℕ-sig : Signature
+  ℕ-sig = record { Sort = ⊤ ; Op = NatOp }
+
+  -- Derived constants and operators.
+  ⟨0⟩ : Expr ℕ-sig tt
+  ⟨0⟩ = apply ZERO ε
+
+  ⟨1⟩ : Expr ℕ-sig tt
+  ⟨1⟩ = apply ONE ε
+
+  ⟨suc⟩ : Expr ℕ-sig tt → Expr ℕ-sig tt
+  ⟨suc⟩ e = apply SUC (e ◂ ε)
+
+  infixl 6 _⊕_
+  infixl 7 _⊗_
+
+  _⊕_ : Expr ℕ-sig tt → Expr ℕ-sig tt → Expr ℕ-sig tt
+  e₁ ⊕ e₂ = apply ADD (e₁ ◂ e₂ ◂ ε)
+
+  _⊗_ : Expr ℕ-sig tt → Expr ℕ-sig tt → Expr ℕ-sig tt
+  e₁ ⊗ e₂ = apply MUL (e₁ ◂ e₂ ◂ ε)
+
+  -- Evaluator for `Expr ℕ-sig tt`.
+  ⟦_⟧ : Expr ℕ-sig tt → (ℕ → ℕ) → ℕ
+  ⟦ var x                    ⟧ ρ = ρ x
+  ⟦ apply ZERO ε             ⟧ _ = 0
+  ⟦ apply ONE  ε             ⟧ _ = 1
+  ⟦ apply SUC  (e ◂ ε)       ⟧ ρ = suc (⟦ e ⟧ ρ)
+  ⟦ apply ADD  (e₁ ◂ e₂ ◂ ε) ⟧ ρ = ⟦ e₁ ⟧ ρ + ⟦ e₂ ⟧ ρ
+  ⟦ apply MUL  (e₁ ◂ e₂ ◂ ε) ⟧ ρ = ⟦ e₁ ⟧ ρ * ⟦ e₂ ⟧ ρ
+
+  -- Atom set for ℕ.
   data EqAtom : ℕ → ℕ → Set where
     +-idʳ : (m : ℕ)   → EqAtom (m + 0) m
     +-idˡ : (m : ℕ)   → EqAtom (0 + m) m
@@ -316,7 +392,6 @@ private
     *-idˡ : (m : ℕ)   → EqAtom (1 * m) m
     inSuc : ∀ {a b} → EqAtom a b → EqAtom (suc a) (suc b)
 
-  -- The interpretation function.
   interpret : ∀ {a b} → EqAtom a b → a ≡ b
   interpret (+-idʳ m) = +-identityʳ m
   interpret (+-idˡ m) = +-identityˡ m
@@ -324,16 +399,13 @@ private
   interpret (*-idˡ m) = *-identityˡ m
   interpret (inSuc a) = cong suc (interpret a)
 
-  -- ** Hand-built chains and the proofs they reify to.
-
-  -- The original key example, expressed with smart-trans.
+  -- Hand-built chains.
   keyChain : ∀ {n} → Chain EqAtom ((n + 0) + 0) n
   keyChain {n} = rule (+-idʳ (n + 0)) ∙ rule (+-idʳ n)
 
   key-example : ∀ {n} → (n + 0) + 0 ≡ n
   key-example = reify interpret keyChain
 
-  -- A length-3 chain.
   longer-example : ∀ {n} → ((n + 0) + 0) + 0 ≡ n
   longer-example {n} =
     reify interpret
@@ -341,122 +413,226 @@ private
       ∙ rule (+-idʳ (n + 0))
       ∙ rule (+-idʳ n))
 
-  -- Mixed rules:  +-idˡ inside, +-idʳ outside.
   mixed-example : ∀ {n} → (0 + n) + 0 ≡ n
   mixed-example {n} =
     reify interpret (rule (+-idʳ (0 + n)) ∙ rule (+-idˡ n))
 
-  -- Multi-operator chain.
   multi-example : ∀ {n} → (n + 0) * 1 ≡ n
   multi-example {n} =
     reify interpret (rule (*-idʳ (n + 0)) ∙ rule (+-idʳ n))
 
-  -- Using inversion: a chain in the "wrong" direction.
   reverse-example : ∀ {n} → n ≡ n + 0
   reverse-example {n} = reify interpret ([inv] (rule (+-idʳ n)))
 
-  -- A detour: prove  n + 0 ≡ 0 + n  via the common reduct `n`.
   detour-example : ∀ {n} → n + 0 ≡ 0 + n
   detour-example {n} =
     reify interpret (rule (+-idʳ n) ∙ [inv] (rule (+-idˡ n)))
 
-  -- Congruence descent through `suc`.
   cong-example : ∀ {n} → suc (n + 0) ≡ suc n
   cong-example {n} = reify interpret (rule (inSuc (+-idʳ n)))
 
-  -- Functor-style cong descent: lift `keyChain` through `suc`.
   via-functor : ∀ {n} → suc ((n + 0) + 0) ≡ suc n
   via-functor = reify interpret (mapChain suc inSuc keyChain)
 
-  -- A redundant loop:  rule then its inverse.  The algebra cleanly
-  -- admits such detours; we don't normalise them away.
   loop-example : ∀ {n} → n + 0 ≡ n + 0
   loop-example {n} =
     reify interpret (rule (+-idʳ n) ∙ [inv] (rule (+-idʳ n)))
 
-  -- ** Greedy discovery of chains over a symbolic expression language.
-
-  -- The expression language carries placeholders (`var`) and the
-  -- specific constants / operators that the atom set knows about.
-  data Expr : Set where
-    var    : ℕ → Expr
-    ⟨0⟩    : Expr
-    ⟨1⟩    : Expr
-    ⟨suc⟩  : Expr → Expr
-    _⊕_    : Expr → Expr → Expr
-    _⊗_    : Expr → Expr → Expr
-
-  infixl 6 _⊕_
-  infixl 7 _⊗_
-
-  -- Evaluate an `Expr` to a `ℕ` given a variable environment.
-  ⟦_⟧ : Expr → (ℕ → ℕ) → ℕ
-  ⟦ var x    ⟧ ρ = ρ x
-  ⟦ ⟨0⟩      ⟧ _ = 0
-  ⟦ ⟨1⟩      ⟧ _ = 1
-  ⟦ ⟨suc⟩ e  ⟧ ρ = suc (⟦ e ⟧ ρ)
-  ⟦ e₁ ⊕ e₂  ⟧ ρ = ⟦ e₁ ⟧ ρ + ⟦ e₂ ⟧ ρ
-  ⟦ e₁ ⊗ e₂  ⟧ ρ = ⟦ e₁ ⟧ ρ * ⟦ e₂ ⟧ ρ
-
-  -- The greedy algorithm.  Each clause inspects the top of the
-  -- expression and either fires the matching rewrite (recording the
-  -- typed atom in the chain) and recurses, descends through `suc`
-  -- using `mapChain`, or stops.
-  --
-  -- The dependent Σ-type is what makes this a *proof-producing*
-  -- algorithm rather than a bare rewrite engine: the right component
-  -- of the pair is forced by the type to be a Chain whose source is
-  -- `⟦ original ⟧` and whose target is `⟦ result ⟧`.
-  greedy : (ρ : ℕ → ℕ) → ℕ → (e : Expr)
-         → Σ Expr λ e′ → Chain EqAtom (⟦ e ⟧ ρ) (⟦ e′ ⟧ ρ)
-  greedy ρ 0       e          = e , rfl
-  greedy ρ (suc n) (e ⊕ ⟨0⟩)  =
+  -- Greedy discovery over `Expr ℕ-sig tt`.
+  greedy : (ρ : ℕ → ℕ) → ℕ → (e : Expr ℕ-sig tt)
+         → Σ (Expr ℕ-sig tt) λ e′ → Chain EqAtom (⟦ e ⟧ ρ) (⟦ e′ ⟧ ρ)
+  greedy ρ 0       e                                       = e , rfl
+  greedy ρ (suc n) (apply ADD (e ◂ apply ZERO ε ◂ ε))      =
     let (e′ , rest) = greedy ρ n e
     in  e′ , rule (+-idʳ (⟦ e ⟧ ρ)) ∙ rest
-  greedy ρ (suc n) (⟨0⟩ ⊕ e)  =
+  greedy ρ (suc n) (apply ADD (apply ZERO ε ◂ e ◂ ε))      =
     let (e′ , rest) = greedy ρ n e
     in  e′ , rule (+-idˡ (⟦ e ⟧ ρ)) ∙ rest
-  greedy ρ (suc n) (e ⊗ ⟨1⟩)  =
+  greedy ρ (suc n) (apply MUL (e ◂ apply ONE  ε ◂ ε))      =
     let (e′ , rest) = greedy ρ n e
     in  e′ , rule (*-idʳ (⟦ e ⟧ ρ)) ∙ rest
-  greedy ρ (suc n) (⟨1⟩ ⊗ e)  =
+  greedy ρ (suc n) (apply MUL (apply ONE  ε ◂ e ◂ ε))      =
     let (e′ , rest) = greedy ρ n e
     in  e′ , rule (*-idˡ (⟦ e ⟧ ρ)) ∙ rest
-  greedy ρ (suc n) (⟨suc⟩ e)  =
+  greedy ρ (suc n) (apply SUC (e ◂ ε))                     =
     let (e′ , rest) = greedy ρ n e
-    in  ⟨suc⟩ e′ , mapChain suc inSuc rest
-  greedy ρ (suc n) e          = e , rfl
+    in  apply SUC (e′ ◂ ε) , mapChain suc inSuc rest
+  greedy ρ (suc n) e                                       = e , rfl
 
-  -- The greedy discoverer applied to the symbolic seed for keyChain.
-  -- The seed represents  (n + 0) + 0  with `n` standing for `var 0` under ρ.
   discovered : ∀ {n} → Chain EqAtom ((n + 0) + 0) n
   discovered {n} = proj₂ (greedy (λ _ → n) 10 ((var 0 ⊕ ⟨0⟩) ⊕ ⟨0⟩))
 
-  -- The discovered chain is definitionally equal to the hand-built one.
   discovered-matches-key : ∀ {n} → discovered {n} ≡ keyChain {n}
   discovered-matches-key = refl
 
-  -- Using the discovered chain to prove the key example.
   discovered-example : ∀ {n} → (n + 0) + 0 ≡ n
   discovered-example = reify interpret discovered
 
-  -- Greedy discovers a length-3 chain.
   discovered-longer : ∀ {n} → ((n + 0) + 0) + 0 ≡ n
   discovered-longer {n} =
     reify interpret
       (proj₂ (greedy (λ _ → n) 10 (((var 0 ⊕ ⟨0⟩) ⊕ ⟨0⟩) ⊕ ⟨0⟩)))
 
-  -- Greedy mixes operators.
   discovered-multi : ∀ {n} → (n + 0) * 1 ≡ n
   discovered-multi {n} =
     reify interpret
       (proj₂ (greedy (λ _ → n) 10 ((var 0 ⊕ ⟨0⟩) ⊗ ⟨1⟩)))
 
-  -- Greedy descends through `suc` and continues simplifying.
   discovered-cong : ∀ {n} → suc ((n + 0) + 0) ≡ suc n
   discovered-cong {n} =
     reify interpret
       (proj₂ (greedy (λ _ → n) 10 (⟨suc⟩ ((var 0 ⊕ ⟨0⟩) ⊕ ⟨0⟩))))
 
-  key-example₂ : {A : Set} {l : List A} → (l ++ []) ++ [] ≡ l
-  key-example₂ = ?
+  ----------------------------------------------------------------
+  -- 10b. Reasoning over `List A`  (single-sorted, `Sort = ⊤`)
+  ----------------------------------------------------------------
+
+  data ListOp : List ⊤ → ⊤ → Set where
+    NIL : ListOp [] tt
+    CAT : ListOp (tt ∷ tt ∷ []) tt
+
+  L-sig : Signature
+  L-sig = record { Sort = ⊤ ; Op = ListOp }
+
+  ⟨[]⟩ : Expr L-sig tt
+  ⟨[]⟩ = apply NIL ε
+
+  infixr 6 _⊞_
+  _⊞_ : Expr L-sig tt → Expr L-sig tt → Expr L-sig tt
+  e₁ ⊞ e₂ = apply CAT (e₁ ◂ e₂ ◂ ε)
+
+  ----------------------------------------------------------------
+  -- 10c. Multi-sorted signature for the `length-map` example.
+  --
+  -- Three sorts coexist:  list-A, list-B, nat.  `map-f` crosses
+  -- from `list-A` to `list-B`; `length-A` and `length-B` are
+  -- distinct operations from those sorts back to `nat`.
+  -- This is the signature; its interpretation depends on a
+  -- specific `f : A → B` and so lives inside a parameterised
+  -- module below.
+  ----------------------------------------------------------------
+
+  data MSort : Set where
+    list-A list-B nat : MSort
+
+  -- Each operation carries its arity profile *and* its codomain in
+  -- its type.  Pattern matching `apply o args` against `Expr M-sig
+  -- nat` then only succeeds for `o : MOp _ nat`, i.e. `length-A` or
+  -- `length-B` — no codom-inversion required.
+  data MOp : List MSort → MSort → Set where
+    length-A : MOp (list-A ∷ []) nat
+    length-B : MOp (list-B ∷ []) nat
+    map-f    : MOp (list-A ∷ []) list-B
+
+  M-sig : Signature
+  M-sig = record { Sort = MSort ; Op = MOp }
+
+  -- All instance-level definitions (those that mention an actual
+  -- element type) live inside `module _ {A : Set}`.  This pins the
+  -- universe level to `Set₀` and keeps `A` from being threaded
+  -- through every signature.
+  module _ {A : Set} where
+
+    ⟦_⟧L : Expr L-sig tt → (ℕ → List A) → List A
+    ⟦ var x                    ⟧L ρ = ρ x
+    ⟦ apply NIL ε              ⟧L _ = []
+    ⟦ apply CAT (e₁ ◂ e₂ ◂ ε)  ⟧L ρ = ⟦ e₁ ⟧L ρ ++ ⟦ e₂ ⟧L ρ
+
+    data ListAtom : List A → List A → Set where
+      ++-idʳᴬ : (xs : List A) → ListAtom (xs ++ []) xs
+
+    interpretL : {xs ys : List A} → ListAtom xs ys → xs ≡ ys
+    interpretL (++-idʳᴬ xs) = ++-identityʳ xs
+
+    -- Hand-built chain solving the user's `key-example₂`.
+    keyChain₂ : {l : List A} → Chain ListAtom ((l ++ []) ++ []) l
+    keyChain₂ {l = l} = rule (++-idʳᴬ (l ++ [])) ∙ rule (++-idʳᴬ l)
+
+    -- Greedy discovery over `Expr L-sig tt`.
+    greedyL : (ρ : ℕ → List A) → ℕ → (e : Expr L-sig tt)
+            → Σ (Expr L-sig tt) λ e′
+              → Chain ListAtom (⟦ e ⟧L ρ) (⟦ e′ ⟧L ρ)
+    greedyL ρ 0       e                                     = e , rfl
+    greedyL ρ (suc n) (apply CAT (e ◂ apply NIL ε ◂ ε))     =
+      let (e′ , rest) = greedyL ρ n e
+      in  e′ , rule (++-idʳᴬ (⟦ e ⟧L ρ)) ∙ rest
+    greedyL ρ (suc n) e                                     = e , rfl
+
+    discovered₂ : {l : List A} → Chain ListAtom ((l ++ []) ++ []) l
+    discovered₂ {l = l} =
+      proj₂ (greedyL (λ _ → l) 10 ((var 0 ⊞ ⟨[]⟩) ⊞ ⟨[]⟩))
+
+    discovered₂-matches-key₂
+      : {l : List A} → discovered₂ {l = l} ≡ keyChain₂ {l = l}
+    discovered₂-matches-key₂ = refl
+
+    key-example₂ : {l : List A} → (l ++ []) ++ [] ≡ l
+    key-example₂ = reify interpretL discovered₂
+
+    ----------------------------------------------------------------
+    -- Inner module: multi-sorted reasoning depends on a specific
+    -- `f : A → B`, so its interpretation, atom set, and greedy live
+    -- in a `module _ {B} (f : A → B)` block.
+    ----------------------------------------------------------------
+
+    module _ {B : Set} (f : A → B) where
+
+      interpSort : MSort → Set
+      interpSort list-A = List A
+      interpSort list-B = List B
+      interpSort nat    = ℕ
+
+      Env : Set
+      Env = (s : MSort) → ℕ → interpSort s
+
+      -- Sort-indexed evaluator.  `var {s = s} x` captures the implicit
+      -- sort so we can dispatch the environment per sort.
+      ⟦_⟧M : ∀ {s} → Expr M-sig s → Env → interpSort s
+      ⟦ var {s = s} x          ⟧M ρ = ρ s x
+      ⟦ apply length-A (e ◂ ε) ⟧M ρ = L.length (⟦ e ⟧M ρ)
+      ⟦ apply length-B (e ◂ ε) ⟧M ρ = L.length (⟦ e ⟧M ρ)
+      ⟦ apply map-f    (e ◂ ε) ⟧M ρ = L.map f (⟦ e ⟧M ρ)
+
+      data MAtom : ℕ → ℕ → Set where
+        length-map-atom
+          : (l : List A) → MAtom (L.length (L.map f l)) (L.length l)
+
+      interpretM : ∀ {a b} → MAtom a b → a ≡ b
+      interpretM (length-map-atom l) = length-map f l
+
+      keyChain₃ : {l : List A}
+                → Chain MAtom (L.length (L.map f l)) (L.length l)
+      keyChain₃ {l = l} = rule (length-map-atom l)
+
+      -- Greedy over `Expr M-sig nat`.  Only one pattern fires:
+      -- `length (map f _)` rewrites to `length _`.  Dependent
+      -- pattern matching works directly now that `MOp` carries the
+      -- codomain in its type.
+      greedyM : (ρ : Env) → ℕ → (e : Expr M-sig nat)
+              → Σ (Expr M-sig nat) λ e′
+                → Chain MAtom (⟦ e ⟧M ρ) (⟦ e′ ⟧M ρ)
+      greedyM ρ 0       e                                           = e , rfl
+      greedyM ρ (suc n) (apply length-B (apply map-f (e ◂ ε) ◂ ε)) =
+        apply length-A (e ◂ ε) , rule (length-map-atom (⟦ e ⟧M ρ))
+      greedyM ρ (suc n) e                                           = e , rfl
+
+      discovered₃ : {l : List A}
+                  → Chain MAtom (L.length (L.map f l)) (L.length l)
+      discovered₃ {l = l} =
+        proj₂ (greedyM env 10 (apply length-B (apply map-f (var 0 ◂ ε) ◂ ε)))
+        where
+          env : (s : MSort) → ℕ → interpSort s
+          env list-A _ = l
+          env list-B _ = []
+          env nat    _ = 0
+
+      discovered₃-matches-key₃
+        : {l : List A} → discovered₃ {l = l} ≡ keyChain₃ {l = l}
+      discovered₃-matches-key₃ = refl
+
+    -- The user-supplied target.  `f` is per-function implicit; the
+    -- proof delegates into the `(f)` module above.
+    key-example₃ : {l : List A} {f : A → B}
+                 → L.length (L.map f l) ≡ L.length l
+    key-example₃ {l = l} {f = f} =
+      reify (interpretM f) (discovered₃ f {l = l})
