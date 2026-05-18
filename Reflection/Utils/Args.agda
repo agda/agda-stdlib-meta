@@ -4,8 +4,11 @@ module Reflection.Utils.Args where
 open import Meta.Prelude
 open import Meta.Init
 
-open import Data.List using (map; zip)
+open import Data.List using (map; zip; reverse)
 open import Data.Fin using (toℕ)
+open import Data.Vec.Base using (Vec; []; _∷_)
+import Data.Vec.Base as Vec
+import Data.Maybe as Maybe
 open import Relation.Nullary using (Dec)
 
 open import Reflection.AST.Argument.Information
@@ -32,6 +35,20 @@ vArgs = λ where
   []            → []
   (vArg x ∷ xs) → x ∷ vArgs xs
   (_      ∷ xs) → vArgs xs
+
+private
+  takeFirst : ∀ {ℓ} {A : Set ℓ} (n : ℕ) → List A → Maybe (Vec A n)
+  takeFirst zero    _        = just []
+  takeFirst (suc _) []       = nothing
+  takeFirst (suc n) (x ∷ xs) = Maybe.map (x ∷_) (takeFirst n xs)
+
+-- Take the last `n` visible arguments of a `def`. Returns `nothing`
+-- if the term isn't a `def` or has fewer than `n` visible
+-- arguments. Hidden arguments and any leading visible arguments
+-- beyond the last `n` are skipped.
+getVisibleArgs : ∀ n → Term → Maybe (Vec Term n)
+getVisibleArgs n (def _ xs) = Maybe.map Vec.reverse (takeFirst n (reverse (vArgs xs)))
+getVisibleArgs _ _ = nothing
 
 argInfo : Arg A → ArgInfo
 argInfo (arg i _) = i
