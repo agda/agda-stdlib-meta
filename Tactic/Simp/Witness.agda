@@ -7,7 +7,10 @@
 --   * `_∙_`          — smart sequential composition (`rfl`-eliding);
 --   * `reify`        — a dependent fold from `Chain` to `_≡_`;
 --   * `Expr Σ s`     — a generic, many-sorted symbolic expression
---                      language over a `Signature`.
+--                      language over a `Signature`;
+--   * `greedy`       — a generic iterative solver that builds a
+--                      typed chain from a user-supplied one-step
+--                      matcher.
 --
 -- Nothing in this file references Agda's reflection types (Term, Name)
 -- or uses the `macro` keyword.
@@ -18,8 +21,10 @@
 
 module Tactic.Simp.Witness where
 
-open import Data.List               using (List; []; _∷_)
-open import Data.Nat                using (ℕ)
+open import Data.List                using (List; []; _∷_)
+open import Data.Maybe               using (Maybe; just; nothing)
+open import Data.Nat                 using (ℕ; zero; suc)
+open import Data.Product             using (_,_; Σ)
 open import Relation.Binary.PropositionalEquality
   using (_≡_; refl; trans; sym)
 
@@ -58,7 +63,7 @@ reify f (rule a)   = f a
 ----------------------------------------------------------------
 -- Generic, many-sorted expression language.
 --
--- A signature specifies a set of sorts, and a set of operation
+-- A signature specifies a set of sorts and a set of operation
 -- symbols.  Each symbol `Op Σ args s` declares its input sorts
 -- (`args : List Sort`) and output sort (`s : Sort`) in its type,
 -- so pattern matching `apply o args` against `Expr Σ s` only
@@ -82,3 +87,73 @@ open Signature public
 data Expr (Σ : Signature) : Sort Σ → Set where
   var   : ∀ {s} → ℕ → Expr Σ s
   apply : ∀ {args s} → Op Σ args s → Args (Expr Σ) args → Expr Σ s
+
+----------------------------------------------------------------
+-- Generic greedy solver.
+--
+-- Given an evaluator `eval` and a one-step matcher that either
+-- rewrites the top of an expression via some `Chain` step or
+-- returns `nothing`, `greedy` iterates up to a fuel limit and
+-- produces a typed chain whose source and target are the source
+-- and final evaluated expressions.
+--
+-- This subsumes any per-signature greedy: the user supplies the
+-- evaluator and a sort-specific matcher; everything else — the
+-- iteration loop, the chain composition, the no-op fallback — is
+-- handled here once and for all.
+----------------------------------------------------------------
+
+-- A matcher inspects the top of an expression in some environment
+-- and either rewrites it via a single `Chain` step or declines.
+-- (`Sg` rather than `Σ` here to avoid shadowing the dependent-sum
+-- type former.)
+Matcher : (Sg : Signature) (s : Sort Sg) {Env X : Set}
+        → (Expr Sg s → Env → X) → (X → X → Set) → Set
+Matcher Sg s {Env} eval R =
+  (ρ : Env) (e : Expr Sg s)
+  → Maybe (Σ (Expr Sg s) λ e′ → Chain R (eval e ρ) (eval e′ ρ))
+
+greedy : ∀ {Sg : Signature} {s : Sort Sg} {Env X : Set} {R : X → X → Set}
+       → (eval : Expr Sg s → Env → X)
+       → Matcher Sg s eval R
+       → (ρ : Env) → ℕ → (e : Expr Sg s)
+       → Σ (Expr Sg s) λ e′ → Chain R (eval e ρ) (eval e′ ρ)
+greedy eval m ρ 0       e = e , rfl
+greedy eval m ρ (suc n) e with m ρ e
+... | just (e′ , step) =
+        let (e″ , rest) = greedy eval m ρ n e′
+        in  e″ , step ∙ rest
+... | nothing = e , rfl
+
+----------------------------------------------------------------
+-- A bundled "setup" for running the simplifier.
+--
+-- `SimpSetup` packages everything that's needed (apart from the
+-- domain-specific matcher and the seed expression) to run `greedy`
+-- and reify its result to a propositional equality: the signature,
+-- the target sort, the environment / carrier types, the evaluator,
+-- the atom relation, and the atom interpretation.
+--
+-- `runSimp` is the standard pipeline: it runs `greedy` to discover
+-- a chain and then `reify`s it to a propositional equality.
+----------------------------------------------------------------
+
+record SimpSetup : Set₁ where
+  field
+    {Sg}      : Signature
+    {s}       : Sort Sg
+    {Env}     : Set
+    {X}       : Set
+    eval      : Expr Sg s → Env → X
+    {R}       : X → X → Set
+    interpret : ∀ {a b} → R a b → a ≡ b
+    match     : Matcher Sg s eval R
+
+module _ (setup : SimpSetup) where
+  open SimpSetup setup
+
+  runSimp : (ρ : Env) → ℕ → (e : Expr Sg s)
+          → Σ (Expr Sg s) λ e′ → eval e ρ ≡ eval e′ ρ
+  runSimp ρ fuel e =
+    let (e′ , chain) = greedy eval match ρ fuel e
+    in  e′ , reify interpret chain
