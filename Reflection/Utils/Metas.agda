@@ -4,7 +4,7 @@ module Reflection.Utils.Metas where
 open import Meta.Prelude
 open import Meta.Init
 
-open import Data.List using (_++_)
+open import Data.List using (_++_; mapMaybe)
 
 isMeta : Term → Bool
 isMeta = λ where
@@ -35,3 +35,15 @@ mutual
     [] → []
     (clause _ _ t      ∷ c) → findMetas t ++ findMetasCl c
     (absurd-clause _ _ ∷ c) → findMetasCl c
+
+metaId : Term → Maybe Meta
+metaId (meta x _) = just x
+metaId _          = nothing
+
+findMetaIds : Term → List Meta
+findMetaIds = mapMaybe metaId ∘ findMetas
+
+firstMeta : Term → Maybe Meta
+firstMeta t = case findMetaIds t of λ where
+  []      → nothing
+  (m ∷ _) → just m
