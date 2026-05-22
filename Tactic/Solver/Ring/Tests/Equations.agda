@@ -34,6 +34,13 @@ module ReadableErrorMessages {c ℓ} (R : CommutativeSemiring c ℓ) where
   -- meta-wrapped : (f : Carrier → Carrier) → ∀ {a} → (∀ {c} → a ≈ f c * a → a ≈ 0#) → a ≈ 0#
   -- meta-wrapped _ f = f (solve-≈ R)
 
+module BundleOnConcreteℚ where
+  open import Data.Rational
+  open import Data.Rational.Properties
+
+  eq : ∀ (q : ℚ) → q * 0ℚ + 0ℚ ≡ 0ℚ
+  eq q = solve-≈ +-*-commutativeRing
+
 module SucAtom where
   open import Data.Nat using (_+_; _*_; suc)
   open import Data.Nat.Properties using (+-*-commutativeSemiring)
