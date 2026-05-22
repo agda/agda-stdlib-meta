@@ -1,393 +1,313 @@
 ------------------------------------------------------------------------
--- An improved ring solver, based on the stdlib's one
+-- A reflection-based ring solver for `CommutativeSemiring`.
 --
--- Automatically handles variable introduction as required, properly
--- deals with most literals, has sensible defaults and a few other
--- bells and whistles. Also has an extensive test suite.
+-- `solve-≈` instantiates `Algebra.Solver.Ring.NaturalCoefficients.Default R`
+-- (ℕ coefficients, no negation) by reflecting the user's bundle into
+-- the polynomial AST and discharging the resulting equation.
+--
+-- Built on `Tactic.Solver.Algebra`. For a new structure (monoid,
+-- lattice, …), write a fresh `Theory` and macro alongside this one.
 
 {-# OPTIONS --without-K --safe #-}
 
 module Tactic.Solver.Ring where
 
 open import Algebra using (CommutativeSemiring)
-open import Data.Fin.Base              using (Fin)
-open import Data.Vec.Base   as Vec     using (Vec; _∷_; [])
-open import Data.List.Base  as List    using (List; _∷_; []; _++_; replicate; foldr; null)
-open import Data.Bool.ListAction        using (any)
-open import Data.Maybe.Base as Maybe   using (Maybe; just; nothing)
-open import Data.Nat.Base              using (ℕ; suc; zero; _+_)
-open import Data.Bool.Base             using (Bool; if_then_else_; true; false; _∧_; not)
-open import Data.Unit.Base             using (⊤; tt)
-open import Data.Product.Base          using (_,_; _×_; proj₁)
-open import Function.Base
+
+open import Data.Bool                  using (Bool; true; false)
+open import Data.Fin                   using (Fin)
+open import Data.List as List          using (List; _∷_; []; map; foldr; length; drop; zip; filterᵇ; reverse)
+open import Data.Maybe as Maybe        using (Maybe; just; nothing; maybe)
+open import Data.Nat                   using (ℕ; suc; zero)
+import Data.Vec as Vec
+open import Data.Nat.Reflection
+open import Data.Product               using (_,_; _×_; proj₁; proj₂; uncurry)
+open import Data.Unit
+
+open import Function
+
+open import Class.Functor
+open import Class.Monad.Instances
+open import Class.Traversable
 
 open import Reflection
 open import Reflection.AST.Argument
-open import Reflection.AST.Term
-open import Reflection.AST.AlphaEquality
-open import Reflection.AST.DeBruijn using (weaken)
 import Reflection.AST.Name as Name
-import Reflection.AST.Meta as Meta
-open import Reflection.TCM.Syntax
-import Agda.Builtin.Reflection as B
-  using (withReduceDefs)
-open import Data.Nat.Reflection
-open import Reflection.Utils.Args using (getVisibleArgs; vArgs)
-open import Reflection.Utils.Core using (extractNat; pickDefName; insertName; insertAtom; findAtomIndex)
-open import Reflection.Utils.Metas using (isMeta; firstMeta; findMetaIds)
-open import Reflection.Utils.TCM using (headReduce)
+open import Reflection.AST.Term
+open import Reflection.TCM.Syntax      hiding (_<$>_)
+open import Reflection.Utils.Args      using (vArgs; takeFirst)
+open import Reflection.Utils.Core      using (extractNat; pickDefName)
+open import Reflection.Utils.TCM       using (headReduce)
 
-private
-  -- Try `extractNat` first; if that fails and we have a wrapping
-  -- constructor name (e.g. ℤ's `+_ : ℕ → ℤ`), peel one layer of
-  -- `con C (arg ∷ [])` and try again.  Used to recognise `(+ n)`
-  -- on ℤ as a polynomial constant.
-  peelLitCon : Name → Term → Maybe ℕ
-  peelLitCon C (con nm xs) with nm Name.≡ᵇ C
-  ... | false = nothing
-  ... | true  = case vArgs xs of λ where
-    (a ∷ []) → extractNat a
-    _        → nothing
-  peelLitCon _ _ = nothing
-
-  extractCarrierNat : Maybe Name → Term → Maybe ℕ
-  extractCarrierNat nothing  t = extractNat t
-  extractCarrierNat (just C) t with extractNat t
-  ... | just n  = just n
-  ... | nothing = peelLitCon C t
+open import Tactic.Solver.Algebra
 
 ------------------------------------------------------------------------
--- CommutativeSemiring-specific machinery.
-------------------------------------------------------------------------
+-- `Algebra.Solver.Ring.Polynomial`'s `con`, `var`, and `:-_` are
+-- nested constructors inside a four-parameter module. Defining
+-- top-level aliases lets the macro reflect them by name (with just
+-- `R` as the visible argument) rather than reconstructing all four
+-- module parameters.
 
 module Solver {c ℓ} (R : CommutativeSemiring c ℓ) where
   open import Algebra.Solver.Ring.NaturalCoefficients.Default R public
 
-  -- Constructor wrappers (using `con` directly via `quote` is
-  -- ambiguous because of name collisions across the imported chain).
   conP : ∀ {n} → ℕ → Polynomial n
   conP = con
 
   varP : ∀ {n} → Fin n → Polynomial n
   varP = var
 
-`CommutativeSemiring : Term
-`CommutativeSemiring = def (quote CommutativeSemiring) (2 ⋯⟨∷⟩ [])
+------------------------------------------------------------------------
+-- Backend reflection helpers (private).
 
-record RingOperatorTerms : Set where
-  constructor add⇒_mul⇒_zero⇒_one⇒_
-  field
-    add mul zero# one# : Term
+private
+  data LitStyle : Set where
+    natStyle    : LitStyle           -- bare ℕ literals; peel `suc`.
+    wrapped     : Name → LitStyle    -- `con C ⟨ n ⟩` (e.g. ℤ's `+_`).
 
--- Try to detect a "carrier-nat constructor": a single-argument
--- constructor `C : ℕ → Carrier` that wraps ℕ literals (e.g. ℤ's
--- `+_`).  We find it by checking that `zero#` and `one#` both have
--- shape `con C (n ∷ [])` with extracted ℕ values `0` and `1`.
-litConstructor : RingOperatorTerms → Maybe Name
-litConstructor (add⇒ _ mul⇒ _ zero⇒ con cz argsZ one⇒ con co argsO) =
-  check (cz Name.≡ᵇ co) (vArgs argsZ) (vArgs argsO)
-  where
-  check : Bool → List Term → List Term → Maybe Name
-  check true (z₀ ∷ []) (o₀ ∷ []) with extractNat z₀ | extractNat o₀
-  ... | just 0 | just 1 = just cz
-  ... | _      | _      = nothing
-  check _ _ _ = nothing
-litConstructor _ = nothing
-
-data RingOpKind : Set where
-  isAdd isMul isZero isOne otherOp : RingOpKind
-
--- Match a `Name` against the four operator Terms. Peels leading
--- λ-binders so η-expanded operators match too.
-classifyOp : RingOperatorTerms → Name → RingOpKind
-classifyOp (add⇒ a mul⇒ m zero⇒ z one⇒ o) nm =
-  if match a then isAdd
-  else if match m then isMul
-  else if match z then isZero
-  else if match o then isOne
-  else otherOp
-  where
-  match : Term → Bool
-  match (def nm' _)           = nm' Name.≡ᵇ nm
-  match (lam _ (abs _ body))  = match body
-  match _                     = false
-
-checkIsRing : Term → TC Term
-checkIsRing ring = checkType ring `CommutativeSemiring
-
--- Fallback `RingOperatorTerms` for abstract bundles (e.g. a module
--- parameter): each operator is the bundle projection applied to
--- `R`. Used when `R` is not a concrete top-level `def`, so we can't
--- `getDefinition` it to peek at the fields.
-abstractRingOperatorTerms : Term → TC RingOperatorTerms
-abstractRingOperatorTerms `R = ⦇
-  add⇒  normalise (def (quote CommutativeSemiring._+_) (2 ⋯⟅∷⟆ `R ⟨∷⟩ []))
-  mul⇒  normalise (def (quote CommutativeSemiring._*_) (2 ⋯⟅∷⟆ `R ⟨∷⟩ []))
-  zero⇒ normalise (def (quote CommutativeSemiring.0#)  (2 ⋯⟅∷⟆ `R ⟨∷⟩ []))
-  one⇒  normalise (def (quote CommutativeSemiring.1#)  (2 ⋯⟅∷⟆ `R ⟨∷⟩ []))
-  ⦈
-
-`refl : Term → Term
-`refl `R = def (quote CommutativeSemiring.refl) (2 ⋯⟅∷⟆ `R ⟨∷⟩ 1 ⋯⟅∷⟆ [])
+  -- Threaded from `detect` to `encode`.
+  record RingState : Set where
+    field
+      litStyle : Maybe LitStyle
 
 ------------------------------------------------------------------------
--- Reflection utilities for the polynomial layer.
+-- Operator-projection Terms from the user's bundle.
 
-module RingSolverReflection (`R : Term) (numberOfVariables : ℕ) where
+private
+  projTerm : Name → Term → Term
+  projTerm nm R = def nm (2 ⋯⟅∷⟆ R ⟨∷⟩ [])
 
-  `numberOfVariables : Term
-  `numberOfVariables = toTerm numberOfVariables
+  csrAdd  csrMul  csrZero csrOne  : Name
+  csrAdd  = quote CommutativeSemiring._+_
+  csrMul  = quote CommutativeSemiring._*_
+  csrZero = quote CommutativeSemiring.0#
+  csrOne  = quote CommutativeSemiring.1#
 
-  infix -1 _$ᵖ_
-  _$ᵖ_ : Name → List (Arg Term) → Term
-  nm $ᵖ xs = def nm (2 ⋯⟅∷⟆ `R ⟨∷⟩ `numberOfVariables ⟅∷⟆ xs)
+  `CommutativeSemiring : Term
+  `CommutativeSemiring = def (quote CommutativeSemiring) (2 ⋯⟨∷⟩ [])
 
-  `con : Term → Term
-  `con n = quote Solver.conP $ᵖ (n ⟨∷⟩ [])
+------------------------------------------------------------------------
+-- Polynomial-AST Term builders. Calling shape:
+--   `def NAME (2 hidden + R-bundle ⟨∷⟩ numVars ⟅∷⟆ ⟨args…⟩)`,
+-- pulling NAMEs from `Solver.*`.
 
-  `var : Term → Term
-  `var i = quote Solver.varP $ᵖ (i ⟨∷⟩ [])
+private
+  defP : (R `n : Term) → Name → List (Arg Term) → Term
+  defP R `n nm args =
+    def nm (2 ⋯⟅∷⟆ R ⟨∷⟩ `n ⟅∷⟆ args)
 
-  `:+ : Term → Term → Term
-  `:+ x y = quote Solver._:+_ $ᵖ (x ⟨∷⟩ y ⟨∷⟩ [])
+  `con : (R `n : Term) → Term → Term
+  `con R `n c = defP R `n (quote Solver.conP) (c ⟨∷⟩ [])
 
-  `:* : Term → Term → Term
-  `:* x y = quote Solver._:*_ $ᵖ (x ⟨∷⟩ y ⟨∷⟩ [])
+  `var : (R `n : Term) → Term → Term
+  `var R `n i = defP R `n (quote Solver.varP) (i ⟨∷⟩ [])
 
-  `:= : Term → Term → Term
-  `:= x y = quote Solver._:=_ $ᵖ (x ⟨∷⟩ y ⟨∷⟩ [])
+  `:+ : (R `n : Term) → Term → Term → Term
+  `:+ R `n x y = defP R `n (quote Solver._:+_) (x ⟨∷⟩ y ⟨∷⟩ [])
 
-  `solver : Term → Term → List Term → Term
-  `solver `f `eq atoms = def (quote Solver.solve)
-                             (2 ⋯⟅∷⟆ `R ⟨∷⟩ `numberOfVariables ⟨∷⟩ `f ⟨∷⟩ `eq ⟨∷⟩ foldr _⟨∷⟩_ [] atoms)
+  `:* : (R `n : Term) → Term → Term → Term
+  `:* R `n x y = defP R `n (quote Solver._:*_) (x ⟨∷⟩ y ⟨∷⟩ [])
 
-  toVarTerm : ℕ → Term
-  toVarTerm i = `var (toFinTerm i)
+  `:= : (R `n : Term) → Term → Term → Term
+  `:= R `n x y = defP R `n (quote Solver._:=_) (x ⟨∷⟩ y ⟨∷⟩ [])
 
-  -- Convert raw user-Term to a Polynomial Term.
-  --
-  -- We recognise:
-  --   * `_+_` / `_*_` as ring operators, including bundle-projection
-  --     forms used in parameterised modules;
-  --   * `0#` / `1#` as the polynomial constants `con 0` / `con 1`;
-  --   * `lit (nat n)`, `con suc^k zero`, and `con C (lit n)` for a
-  --     detected carrier-nat constructor `C` (e.g. ℤ's `+_`) — each
-  --     decoded into `con n`;
-  --   * `suc t` where `t` is non-literal — peeled into `con 1 :+ t`.
-  --
-  -- For anything else we call the supplied `fallback`, which `solve-≈`
-  -- uses to look the term up in an atom table and emit
-  -- `varP (Fin i)` for the matching atom (auto-quantification).
-  convertTerm : RingOperatorTerms → (Term → Term) → Term → Term
-  convertTerm operatorTerms fallback = convert
+  `refl : (R : Term) → Term
+  `refl R = def (quote CommutativeSemiring.refl) (2 ⋯⟅∷⟆ R ⟨∷⟩ 1 ⋯⟅∷⟆ [])
+
+------------------------------------------------------------------------
+-- Literal-style recognition from the bundle's `0#` and `1#` Terms.
+
+private
+  detectLitStyle : Term → Term → Maybe LitStyle
+  detectLitStyle (con cz argsZ) (con co argsO) =
+    case (cz Name.≡ᵇ co) of λ where
+      true → case (vArgs argsZ , vArgs argsO) of λ where
+        ((z₀ ∷ []) , (o₀ ∷ [])) → case (extractNat z₀ , extractNat o₀) of λ where
+          (just 0 , just 1) → just (wrapped cz)
+          _ → fallthrough
+        _ → fallthrough
+      false → fallthrough
     where
-    litCon : Maybe Name
-    litCon = litConstructor operatorTerms
-
-    mutual
-      -- Try literal recognition first; then strip a `suc` and emit
-      -- `con 1 :+ convert inner`; otherwise dispatch on the head.
-      convert : Term → Term
-      convert t with extractCarrierNat litCon t
-      ... | just n  = `con (toTerm n)
-      ... | nothing = convertHead t
-
-      convertHead : Term → Term
-      convertHead (def nm xs) = case classifyOp operatorTerms nm of λ where
-        isAdd   → convertOp₂ `:+ xs
-        isMul   → convertOp₂ `:* xs
-        isZero  → `con (toTerm 0)
-        isOne   → `con (toTerm 1)
-        otherOp → fallback (def nm xs)
-      convertHead t@(con nm xs) with nm Name.≡ᵇ quote suc | xs
-      ... | true | arg (arg-info visible _) x ∷ [] = `:+ (`con (toTerm 1)) (convert x)
-      ... | _    | _ = fallback t
-      convertHead t = fallback t
-
-      convertOp₂ : (Term → Term → Term) → Args Term → Term
-      convertOp₂ mk (x ⟨∷⟩ y ⟨∷⟩ []) = mk (convert x) (convert y)
-      convertOp₂ mk (x ∷ xs) = convertOp₂ mk xs
-      convertOp₂ _  _        = `con (toTerm 0)
+    fallthrough : Maybe LitStyle
+    fallthrough = case (extractNat (con cz argsZ) , extractNat (con co argsO)) of λ where
+      (just 0 , just 1) → just natStyle
+      _ → nothing
+  detectLitStyle z o = case (extractNat z , extractNat o) of λ where
+    (just 0 , just 1) → just natStyle
+    _ → nothing
 
 ------------------------------------------------------------------------
+-- Operator detection: concrete record peek + abstract-projection
+-- fallback.
 
-open RingSolverReflection
+private
+  collectDefNames : List Term → List Name
+  collectDefNames = List.foldr pickDefName []
 
--- Collect the def-Names of every recognised ring-operator occurrence
--- in the user term (used to seed the `withReduceDefs` block list).
-collectOpNames : RingOperatorTerms → Term → List Name → List Name
-collectOpNames operatorTerms = collect
-  where
-  mutual
-    collect : Term → List Name → List Name
-    collect (def nm xs) acc = case classifyOp operatorTerms nm of λ where
-      otherOp → acc
-      isZero  → insertName nm acc
-      isOne   → insertName nm acc
-      isAdd   → collectArgs xs (insertName nm acc)
-      isMul   → collectArgs xs (insertName nm acc)
-    collect _ acc = acc
+  -- A slot's role. `op` is a generic concrete operator field;
+  -- `zeroLit` and `oneLit` mark literals. (`derived` exists for
+  -- structures with non-field operators; CSR has none.)
+  data SlotKind : Set where
+    op zeroLit oneLit derived : SlotKind
 
-    collectArgs : Args Term → List Name → List Name
-    collectArgs []                                acc = acc
-    collectArgs (arg (arg-info visible _) x ∷ xs) acc = collectArgs xs (collect x acc)
-    collectArgs (_ ∷ xs)                          acc = collectArgs xs acc
+  -- An operator slot: `(projection-name , arity , kind)`. The slot
+  -- order is the source of truth for `operatorMatches` (and so must
+  -- align with `opEncoders` in `mkEncode`).
+  Slot : Set
+  Slot = Name × ℕ × SlotKind
 
--- Walk a Term, accumulating atomic subterms into the supplied list.
--- Operators and ℕ literals are decomposed/skipped; anything else
--- becomes an atom.
-collectAtoms : RingOperatorTerms → Term → List Term → List Term
-collectAtoms operatorTerms = collect
-  where
-  litCon : Maybe Name
-  litCon = litConstructor operatorTerms
+  slotProj : Slot → Name
+  slotProj s = proj₁ s
 
-  mutual
-    collect : Term → List Term → List Term
-    collect t acc with extractCarrierNat litCon t
-    ... | just _  = acc
-    ... | nothing = collectHead t acc
+  slotArity : Slot → ℕ
+  slotArity s = proj₁ (proj₂ s)
 
-    collectHead : Term → List Term → List Term
-    collectHead (def nm xs) acc = case classifyOp operatorTerms nm of λ where
-      isAdd   → collectOp₂ xs acc
-      isMul   → collectOp₂ xs acc
-      isZero  → acc
-      isOne   → acc
-      otherOp → insertAtom (def nm xs) acc
-    collectHead t@(con nm xs) acc with nm Name.≡ᵇ quote suc | xs
-    ... | true | arg (arg-info visible _) x ∷ [] = collect x acc
-    ... | _    | _ = insertAtom t acc
-    collectHead t acc = insertAtom t acc
+  slotKind : Slot → SlotKind
+  slotKind s = proj₂ (proj₂ s)
 
-    collectOp₂ : Args Term → List Term → List Term
-    collectOp₂ (x ⟨∷⟩ y ⟨∷⟩ []) acc = collect y (collect x acc)
-    collectOp₂ (x ∷ xs) acc = collectOp₂ xs acc
-    collectOp₂ []       acc = acc
+  slotIsConcrete : Slot → Bool
+  slotIsConcrete s with slotKind s
+  ... | derived = false
+  ... | _       = true
+
+  csrSlots : List Slot
+  csrSlots = (csrAdd  , 2 , op)
+           ∷ (csrMul  , 2 , op)
+           ∷ (csrZero , 0 , zeroLit)
+           ∷ (csrOne  , 0 , oneLit)
+           ∷ []
+
+  mkLitMatch : Maybe LitStyle → Maybe LiteralMatch
+  mkLitMatch nothing             = nothing
+  mkLitMatch (just natStyle)     = just (litMatch nothing  true)
+  mkLitMatch (just (wrapped C))  = just (litMatch (just C) false)
+
+  -- Pull the `0` and `1` slot Terms by kind. Returns `nothing` if
+  -- either is missing from the slot list.
+  findZeroOne : List (Slot × Term) → Maybe (Term × Term)
+  findZeroOne = go nothing nothing
+    where
+    go : Maybe Term → Maybe Term → List (Slot × Term) → Maybe (Term × Term)
+    go (just z) (just o) _  = just (z , o)
+    go _        _        [] = nothing
+    go mz mo ((s , t) ∷ rest) with slotKind s
+    ... | zeroLit = go (just t) mo rest
+    ... | oneLit  = go mz (just t) rest
+    ... | _       = go mz mo rest
+
+  detectCSR : Term → TC (TheoryDetect × RingState)
+  detectCSR R = do
+    R' ← headReduce 16 R
+    let slots         = csrSlots
+    let concreteN     = length (filterᵇ slotIsConcrete slots)
+    case R' of λ where
+      (con _ args) → case Maybe.map Vec.toList (takeFirst concreteN (drop 2 (vArgs args))) of λ where
+        (just rawOps) → do
+          concOps ← traverse ⦃ Functor-List ⦄ (headReduce 16) rawOps
+          slotted ← zipSlots slots concOps
+          let blockNs = collectDefNames concOps
+          let ls = maybe (uncurry detectLitStyle) nothing (findZeroOne slotted)
+          pure
+            ( record
+                { operatorMatches = List.map (λ (s , t) → opMatch t (slotArity s)) slotted
+                ; blockedNames    = blockNs
+                ; literalMatch    = mkLitMatch ls
+                }
+            , record { litStyle = ls }
+            )
+        nothing → abstractPath slots
+      _ → abstractPath slots
+    where
+    zipSlots : List Slot → List Term → TC (List (Slot × Term))
+    zipSlots []         _   = pure []
+    zipSlots (s ∷ rest) ops = case slotKind s of λ where
+      derived → do
+        t ← normalise (projTerm (slotProj s) R)
+        rs ← zipSlots rest ops
+        pure ((s , t) ∷ rs)
+      _ → case ops of λ where
+        (t ∷ ops') → do
+          rs ← zipSlots rest ops'
+          pure ((s , t) ∷ rs)
+        [] → pure []
+
+    abstractPath : List Slot → TC (TheoryDetect × RingState)
+    abstractPath slots = do
+      ts ← traverse ⦃ Functor-List ⦄ normalise (List.map (λ s → projTerm (slotProj s) R) slots)
+      pure
+        ( record
+            { operatorMatches = List.map (λ (s , t) → opMatch t (slotArity s)) (zip slots ts)
+            ; blockedNames    = []
+            ; literalMatch    = nothing
+            }
+        , record { litStyle = nothing }
+        )
 
 ------------------------------------------------------------------------
--- Inspect a bundle term `R` and produce its `RingOperatorTerms`
--- plus the list of underlying field-value Names to block via
--- `withReduceDefs`.
+-- Encoder construction.
 
-ringOperatorTerms : Term → TC (RingOperatorTerms × List Name)
-ringOperatorTerms `R = do
-  `R' ← headReduce 16 `R
-  case `R' of λ where
-    (con _ args) → case vArgs args of λ where
-      (_ ∷ _ ∷ a ∷ m ∷ z ∷ o ∷ _ ∷ []) → do
-        a' ← headReduce 16 a
-        m' ← headReduce 16 m
-        z' ← headReduce 16 z
-        o' ← headReduce 16 o
-        let ops = add⇒ a' mul⇒ m' zero⇒ z' one⇒ o'
-        pure (ops , foldr pickDefName [] (a' ∷ m' ∷ z' ∷ o' ∷ []))
-      _ → fallback
-    _ → fallback
-  where
-  fallback : TC (RingOperatorTerms × List Name)
-  fallback = do
-    ops ← abstractRingOperatorTerms `R
-    pure (ops , [])
+private
+  mkEncode : (R↓↓ R↓ : Term)
+           → (numAtoms : ℕ) → Maybe LitStyle → TheoryEncode
+  mkEncode R↓↓ R↓ numAtoms litStyle = record
+    { opEncoders  = opAdd ∷ opMul ∷ opZero ∷ opOne ∷ []
+    ; encodeNat   = encNat
+    ; sucPeel     = sucPeelFn
+    ; encodeVar   = encVar
+    ; encodeEq    = `:= R↓↓ `n
+    ; finishSolve = finish
+    }
+    where
+    `n = toTerm numAtoms
+
+    opAdd : List Term → Term
+    opAdd (x ∷ y ∷ _) = `:+ R↓↓ `n x y
+    opAdd _           = unknown
+
+    opMul : List Term → Term
+    opMul (x ∷ y ∷ _) = `:* R↓↓ `n x y
+    opMul _           = unknown
+
+    opZero : List Term → Term
+    opZero _ = `con R↓↓ `n (toTerm 0)
+
+    opOne : List Term → Term
+    opOne _ = `con R↓↓ `n (toTerm 1)
+
+    encNat : ℕ → Term
+    encNat n = `con R↓↓ `n (toTerm n)
+
+    sucPeelFn : Term → Term
+    sucPeelFn inner =
+      `:+ R↓↓ `n (`con R↓↓ `n (toTerm 1)) inner
+
+    encVar : ℕ → Term
+    encVar i = `var R↓↓ `n (toFinTerm i)
+
+    finish : Term → List Term → Term
+    finish lambdaBody atoms =
+      def (quote Solver.solve) (2 ⋯⟅∷⟆ R↓ ⟨∷⟩ `n ⟨∷⟩ lambdaBody ⟨∷⟩ `refl R↓ ⟨∷⟩ List.map vArg atoms)
 
 ------------------------------------------------------------------------
--- `solve-≈`: closed-equation form with auto-quantification.
+-- The macro.
 
-malformedClosedEqError : ∀ {a} {A : Set a} → Term → TC A
-malformedClosedEqError found = typeError
-  ( strErr "Malformed call to solve-≈."
-  ∷ strErr "Expected target type to be of shape  LHS ≈ RHS."
-  ∷ strErr "Instead: "
-  ∷ termErr found
-  ∷ [])
-
--- Atom-lookup fallback: given a Term, return its polynomial-var
--- form if it appears in the atoms list, else `con 0`.
-atomFallback : Term → ℕ → List Term → Term → Term
-atomFallback `R↑ numAtoms atoms t with findAtomIndex t atoms
-... | just i  = toVarTerm `R↑ numAtoms i
-... | nothing = `con `R↑ numAtoms (toTerm 0)
+private
+  csrTheory : Theory
+  csrTheory = record
+    { bundleType = `CommutativeSemiring
+    ; State      = RingState
+    ; detect     = detectCSR
+    ; encode     = λ R↓↓ R↓ n st → mkEncode R↓↓ R↓ n (RingState.litStyle st)
+    }
 
 solve-≈-macro : Term → Term → TC ⊤
-solve-≈-macro `R hole = do
-  `R' ← checkIsRing `R
+solve-≈-macro R hole = do
+  -- `commitTC` locks in `checkType`'s metavariable resolutions
+  -- before further work that depends on `R`'s type being settled.
+  -- `solveByTheory` deliberately doesn't redo the `checkType`.
+  R' ← checkType R `CommutativeSemiring
   commitTC
-  operatorTerms , bundleNs ← ringOperatorTerms `R'
-
-  `hole₀ ← inferType hole
-  let _ , equation₀ = stripPis `hole₀
-  let opNamesFromGoal = case getVisibleArgs 2 equation₀ of λ where
-        (just (lhs₀ ∷ rhs₀ ∷ [])) → collectOpNames operatorTerms rhs₀ (collectOpNames operatorTerms lhs₀ [])
-        _ → []
-  let opNames = bundleNs ++ opNamesFromGoal
-
-  B.withReduceDefs (false , opNames) $ do
-    -- Use `normalise` (not `reduce`) here: Agda's elaborator can
-    -- leave the goal type wrapped in lambdas; `normalise` β-reduces
-    -- those away.
-    `hole ← normalise `hole₀
-
-    -- Detect the deadlock: the goal contains metavariables that
-    -- only this macro could resolve, so `blockOnMeta` would retry
-    -- forever. We flag this when both sides have structure (so
-    -- neither is a bare meta `blockOnMeta` could fill in via sibling
-    -- constraints), some side has metas, AND no meta is shared
-    -- across the equation.
-    --
-    -- A meta shared between LHS and RHS can be resolved by Agda
-    -- propagating constraints across the equation, so we defer those
-    -- to `blockOnMeta` instead of erroring.
-    let _ , equationProbe = stripPis `hole
-    case getVisibleArgs 2 equationProbe of λ where
-      (just (lhs₀ ∷ rhs₀ ∷ [])) → do
-        let bothStructured = not (isMeta lhs₀) ∧ not (isMeta rhs₀)
-        let metasL         = findMetaIds lhs₀
-        let metasR         = findMetaIds rhs₀
-        let anyMetas       = not (null metasL ∧ null metasR)
-        let sharedMeta     = any (λ x → any (Meta._≡ᵇ_ x) metasR) metasL
-        case bothStructured ∧ anyMetas ∧ not sharedMeta of λ where
-          true  → typeError
-            ( strErr "solve-≈: the goal `LHS ≈ RHS` has at least one side "
-            ∷ strErr "containing an metavariable that could not be resolved. To run this "
-            ∷ strErr "solver you must add type annotations to resolve these variables."
-            ∷ [])
-          false → pure tt
-      _ → pure tt
-
-    -- Block on any unresolved meta in the goal type so Agda's
-    -- elaborator has a chance to resolve it via adjacent constraints.
-    case firstMeta `hole of λ where
-      (just m) → blockOnMeta m
-      nothing  → pure tt
-    let variablesAndTypes , equation = stripPis `hole
-    let variables = List.map proj₁ variablesAndTypes
-    let numPiVars = List.length variables
-
-    just (lhs ∷ rhs ∷ []) ← pure (getVisibleArgs 2 equation)
-      where _ → malformedClosedEqError `hole
-
-    -- Pass 1: collect atoms from LHS, then from RHS (preserving order).
-    let atoms = collectAtoms operatorTerms rhs (collectAtoms operatorTerms lhs [])
-    let numAtoms = List.length atoms
-
-    -- Pass 2: convert with an atom-lookup fallback. The polynomial
-    -- body lives at depth `numPiVars + numAtoms` relative to the
-    -- macro's call-site (the wrapper lambdas re-introducing the
-    -- pi-binders, then the polynomial-lambda's binders inside).
-    let `R↓↓ = weaken (numPiVars + numAtoms) `R
-    let `lhsExpr = convertTerm `R↓↓ numAtoms operatorTerms (atomFallback `R↓↓ numAtoms atoms) lhs
-    let `rhsExpr = convertTerm `R↓↓ numAtoms operatorTerms (atomFallback `R↓↓ numAtoms atoms) rhs
-
-    -- Build the lambda body and the `solve R N f refl atoms` term.
-    -- At the wrapper-lambda level, depth is `numPiVars`; we use
-    -- `R↓ = weaken numPiVars R` for `solver`/`refl`.
-    let `R↓        = weaken numPiVars `R
-    let lambdaBody = `:= `R↓↓ numAtoms `lhsExpr `rhsExpr
-    let f          = prependVLams (replicate numAtoms "x") lambdaBody
-    let solverCall = `solver `R↓ numAtoms f (`refl `R↓) atoms
-
-    -- Wrap with the pi-binders that the user didn't introduce as patterns
-    unify hole (prependVLams variables solverCall)
+  solveByTheory csrTheory R' hole
 
 macro
   solve-≈ : Term → Term → TC ⊤

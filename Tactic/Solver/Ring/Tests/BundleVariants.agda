@@ -8,15 +8,12 @@
 module Tactic.Solver.Ring.Tests.BundleVariants where
 
 open import Algebra using (CommutativeSemiring)
-open import Data.Integer as ℤ              using (ℤ)
-import Data.Integer.Base                   as ℤB
-open import Data.Integer.Properties        as ℤP
-  using (+-*-commutativeSemiring)
-open import Data.Nat                       as ℕ using (ℕ)
-import Data.Nat.Base                       as ℕB
-open import Data.Nat.Properties            as ℕP
-open import Relation.Binary.PropositionalEquality
-  using (_≡_)
+open import Data.Integer as ℤ       using (ℤ)
+import Data.Integer.Properties      as ℤP
+open import Data.Nat as ℕ           using (ℕ)
+import Data.Nat.Properties          as ℕP
+open import Data.Sign               as Sign using (Sign)
+open import Relation.Binary.PropositionalEquality using (_≡_)
 open import Tactic.Solver.Ring using (solve-≈)
 
 ------------------------------------------------------------------------
@@ -41,10 +38,10 @@ myZ'' : CommutativeSemiring _ _
 myZ'' = record
   { Carrier               = ℤ
   ; _≈_                   = _≡_
-  ; _+_                   = ℤB._+_
-  ; _*_                   = ℤB._*_
-  ; 0#                    = ℤB.+ 0
-  ; 1#                    = ℤB.+ 1
+  ; _+_                   = ℤ._+_
+  ; _*_                   = ℤ._*_
+  ; 0#                    = ℤ.+ 0
+  ; 1#                    = ℤ.+ 1
   ; isCommutativeSemiring = ℤP.+-*-isCommutativeSemiring
   }
 
@@ -64,10 +61,10 @@ myZη : CommutativeSemiring _ _
 myZη = record
   { Carrier               = ℤ
   ; _≈_                   = _≡_
-  ; _+_                   = λ a b → a ℤB.+ b
-  ; _*_                   = λ a b → a ℤB.* b
-  ; 0#                    = ℤB.+ 0
-  ; 1#                    = ℤB.+ 1
+  ; _+_                   = λ a b → a ℤ.+ b
+  ; _*_                   = λ a b → a ℤ.* b
+  ; 0#                    = ℤ.+ 0
+  ; 1#                    = ℤ.+ 1
   ; isCommutativeSemiring = ℤP.+-*-isCommutativeSemiring
   }
 
@@ -99,8 +96,8 @@ myN' : CommutativeSemiring _ _
 myN' = record
   { Carrier               = ℕ
   ; _≈_                   = _≡_
-  ; _+_                   = ℕB._+_
-  ; _*_                   = ℕB._*_
+  ; _+_                   = ℕ._+_
+  ; _*_                   = ℕ._*_
   ; 0#                    = 0
   ; 1#                    = 1
   ; isCommutativeSemiring = ℕP.+-*-isCommutativeSemiring
@@ -122,7 +119,7 @@ makeZ : ℤ → CommutativeSemiring _ _
 makeZ _ = ℤP.+-*-commutativeSemiring
 
 myZf : CommutativeSemiring _ _
-myZf = makeZ (ℤB.+ 0)
+myZf = makeZ (ℤ.+ 0)
 
 module FunctionResultZ where
   open CommutativeSemiring myZf
@@ -155,7 +152,7 @@ module DoubleAliasZ where
 -- 7. Record update on top of an alias.
 
 myZUpdated : CommutativeSemiring _ _
-myZUpdated = record myZAlias1 { 0# = ℤB.+ 0 }
+myZUpdated = record myZAlias1 { 0# = ℤ.+ 0 }
 
 module RecordUpdateOfAliasZ where
   open CommutativeSemiring myZUpdated
@@ -171,8 +168,8 @@ module RecordUpdateOfAliasZ where
 
 myZUpdatedη : CommutativeSemiring _ _
 myZUpdatedη = record ℤP.+-*-commutativeSemiring
-  { _+_ = λ a b → a ℤB.+ b
-  ; _*_ = λ a b → a ℤB.* b
+  { _+_ = λ a b → a ℤ.+ b
+  ; _*_ = λ a b → a ℤ.* b
   }
 
 module RecordUpdateηZ where
@@ -186,7 +183,7 @@ module RecordUpdateηZ where
 
 ------------------------------------------------------------------------
 -- 9. Inlined operator body (KNOWN FAILURE). Instead of referring to
---    `ℤB._*_`, write its definition `sign i Sign.* sign j ◃ ∣i∣ ℕ.*
+--    `ℤ._*_`, write its definition `sign i Sign.* sign j ◃ ∣i∣ ℕ.*
 --    ∣j∣` directly in the bundle.
 --
 --    We cannot tell Agda to stop reduction at a record projection
@@ -198,11 +195,9 @@ module RecordUpdateηZ where
 --    The workaround is to give the inlined formula its own top-level
 --    definition.
 
-open import Data.Sign.Base as Sign using (Sign)
-
 myZInlined : CommutativeSemiring _ _
 myZInlined = record ℤP.+-*-commutativeSemiring
-  { _*_ = λ i j → ℤB.sign i Sign.* ℤB.sign j ℤB.◃ ℤB.∣ i ∣ ℕB.* ℤB.∣ j ∣
+  { _*_ = λ i j → ℤ.sign i Sign.* ℤ.sign j ℤ.◃ ℤ.∣ i ∣ ℕ.* ℤ.∣ j ∣
   }
 
 module InlinedBodyZ where
