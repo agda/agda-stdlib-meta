@@ -16,6 +16,10 @@ record MonadError (E : Set e) (M : ∀ {f} → Set f → Set f) : Setω where
     error : E → M A
     catch : M A → (E → M A) → M A
 
+  instance
+    Alternative-M : Alternative M
+    Alternative-M = record { _<|>_ = λ x y → catch x (λ _ → y) }
+
 open MonadError
 
 MonadError-TC : MonadError (List ErrorPart) TC

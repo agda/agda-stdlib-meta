@@ -1,9 +1,12 @@
 ------------------------------------------------------------------------
--- A reflection-based ring solver for `CommutativeSemiring`.
+-- A reflection-based ring solver.
 --
--- `solve-≈` instantiates `Algebra.Solver.Ring.NaturalCoefficients.Default R`
--- (ℕ coefficients, no negation) by reflecting the user's bundle into
--- the polynomial AST and discharging the resulting equation.
+-- `solve-≈` accepts either a `CommutativeSemiring` or a
+-- `CommutativeRing` and dispatches to the appropriate backend:
+--   * CSR → `Algebra.Solver.Ring.NaturalCoefficients.Default R`
+--     (ℕ coefficients, no negation);
+--   * CR  → `Tactic.Solver.Ring.IntegerCoefficients R` (ℤ
+--     coefficients, real negation; recognises `_-_` and `-_`).
 --
 -- Built on `Tactic.Solver.Algebra`. For a new structure (monoid,
 -- lattice, …), write a fresh `Theory` and macro alongside this one.
@@ -12,10 +15,11 @@
 
 module Tactic.Solver.Ring where
 
-open import Algebra using (CommutativeSemiring)
+open import Algebra using (CommutativeSemiring; CommutativeRing)
 
 open import Data.Bool                  using (Bool; true; false)
 open import Data.Fin                   using (Fin)
+open import Data.Integer               using (ℤ; +_)
 open import Data.List as List          using (List; _∷_; []; map; foldr; length; drop; zip; filterᵇ; reverse)
 open import Data.Maybe as Maybe        using (Maybe; just; nothing; maybe)
 open import Data.Nat                   using (ℕ; suc; zero)
@@ -40,6 +44,7 @@ open import Reflection.Utils.Core      using (extractNat; pickDefName)
 open import Reflection.Utils.TCM       using (headReduce)
 
 open import Tactic.Solver.Algebra
+import Tactic.Solver.Ring.IntegerCoefficients as IntC
 
 ------------------------------------------------------------------------
 -- `Algebra.Solver.Ring.Polynomial`'s `con`, `var`, and `:-_` are
@@ -61,6 +66,9 @@ module Solver {c ℓ} (R : CommutativeSemiring c ℓ) where
 -- Backend reflection helpers (private).
 
 private
+  data RingSide : Set where
+    csr cr : RingSide
+
   data LitStyle : Set where
     natStyle    : LitStyle           -- bare ℕ literals; peel `suc`.
     wrapped     : Name → LitStyle    -- `con C ⟨ n ⟩` (e.g. ℤ's `+_`).
@@ -83,36 +91,62 @@ private
   csrZero = quote CommutativeSemiring.0#
   csrOne  = quote CommutativeSemiring.1#
 
-  `CommutativeSemiring : Term
-  `CommutativeSemiring = def (quote CommutativeSemiring) (2 ⋯⟨∷⟩ [])
+  crAdd  crMul  crSub  crNeg  crZero crOne  : Name
+  crAdd  = quote CommutativeRing._+_
+  crMul  = quote CommutativeRing._*_
+  crSub  = quote CommutativeRing._-_
+  crNeg  = quote (CommutativeRing.-_)
+  crZero = quote CommutativeRing.0#
+  crOne  = quote CommutativeRing.1#
+
+  bundleTypeOf : RingSide → Term
+  bundleTypeOf csr = def (quote CommutativeSemiring) (2 ⋯⟨∷⟩ [])
+  bundleTypeOf cr  = def (quote CommutativeRing)     (2 ⋯⟨∷⟩ [])
 
 ------------------------------------------------------------------------
 -- Polynomial-AST Term builders. Calling shape:
 --   `def NAME (2 hidden + R-bundle ⟨∷⟩ numVars ⟅∷⟆ ⟨args…⟩)`,
--- pulling NAMEs from `Solver.*`.
+-- pulling NAMEs from `Solver.*` for CSR and `IntC.*` for CR.
 
 private
   defP : (R `n : Term) → Name → List (Arg Term) → Term
   defP R `n nm args =
     def nm (2 ⋯⟅∷⟆ R ⟨∷⟩ `n ⟅∷⟆ args)
 
-  `con : (R `n : Term) → Term → Term
-  `con R `n c = defP R `n (quote Solver.conP) (c ⟨∷⟩ [])
+  conName varName addName mulName eqName solveName reflName
+    : RingSide → Name
+  conName   csr = quote Solver.conP        ; conName   cr = quote IntC.conP
+  varName   csr = quote Solver.varP        ; varName   cr = quote IntC.varP
+  addName   csr = quote Solver._:+_        ; addName   cr = quote IntC._:+_
+  mulName   csr = quote Solver._:*_        ; mulName   cr = quote IntC._:*_
+  eqName    csr = quote Solver._:=_        ; eqName    cr = quote IntC._:=_
+  solveName csr = quote Solver.solve       ; solveName cr = quote IntC.solve
+  reflName  csr = quote CommutativeSemiring.refl
+  reflName  cr  = quote CommutativeRing.refl
 
-  `var : (R `n : Term) → Term → Term
-  `var R `n i = defP R `n (quote Solver.varP) (i ⟨∷⟩ [])
+  `con : RingSide → (R `n : Term) → Term → Term
+  `con s R `n c = defP R `n (conName s) (c ⟨∷⟩ [])
 
-  `:+ : (R `n : Term) → Term → Term → Term
-  `:+ R `n x y = defP R `n (quote Solver._:+_) (x ⟨∷⟩ y ⟨∷⟩ [])
+  `var : RingSide → (R `n : Term) → Term → Term
+  `var s R `n i = defP R `n (varName s) (i ⟨∷⟩ [])
 
-  `:* : (R `n : Term) → Term → Term → Term
-  `:* R `n x y = defP R `n (quote Solver._:*_) (x ⟨∷⟩ y ⟨∷⟩ [])
+  `:+ : RingSide → (R `n : Term) → Term → Term → Term
+  `:+ s R `n x y = defP R `n (addName s) (x ⟨∷⟩ y ⟨∷⟩ [])
 
-  `:= : (R `n : Term) → Term → Term → Term
-  `:= R `n x y = defP R `n (quote Solver._:=_) (x ⟨∷⟩ y ⟨∷⟩ [])
+  `:* : RingSide → (R `n : Term) → Term → Term → Term
+  `:* s R `n x y = defP R `n (mulName s) (x ⟨∷⟩ y ⟨∷⟩ [])
 
-  `refl : (R : Term) → Term
-  `refl R = def (quote CommutativeSemiring.refl) (2 ⋯⟅∷⟆ R ⟨∷⟩ 1 ⋯⟅∷⟆ [])
+  `:- : (R `n : Term) → Term → Term → Term
+  `:- R `n x y = defP R `n (quote IntC._:-_) (x ⟨∷⟩ y ⟨∷⟩ [])
+
+  `:-‿ : (R `n : Term) → Term → Term
+  `:-‿ R `n x = defP R `n (quote IntC.negP) (x ⟨∷⟩ [])
+
+  `:= : RingSide → (R `n : Term) → Term → Term → Term
+  `:= s R `n x y = defP R `n (eqName s) (x ⟨∷⟩ y ⟨∷⟩ [])
+
+  `refl : RingSide → (R : Term) → Term
+  `refl s R = def (reflName s) (2 ⋯⟅∷⟆ R ⟨∷⟩ 1 ⋯⟅∷⟆ [])
 
 ------------------------------------------------------------------------
 -- Literal-style recognition from the bundle's `0#` and `1#` Terms.
@@ -145,8 +179,8 @@ private
   collectDefNames = List.foldr pickDefName []
 
   -- A slot's role. `op` is a generic concrete operator field;
-  -- `zeroLit` and `oneLit` mark literals. (`derived` exists for
-  -- structures with non-field operators; CSR has none.)
+  -- `derived` is additional syntax that isn't a field; `zeroLit` and
+  -- `oneLit` mark literals.
   data SlotKind : Set where
     op zeroLit oneLit derived : SlotKind
 
@@ -177,6 +211,19 @@ private
            ∷ (csrOne  , 0 , oneLit)
            ∷ []
 
+  crSlots : List Slot
+  crSlots = (crAdd  , 2 , op)
+          ∷ (crMul  , 2 , op)
+          ∷ (crSub  , 2 , derived)
+          ∷ (crNeg  , 1 , op)
+          ∷ (crZero , 0 , zeroLit)
+          ∷ (crOne  , 0 , oneLit)
+          ∷ []
+
+  slotsFor : RingSide → List Slot
+  slotsFor csr = csrSlots
+  slotsFor cr  = crSlots
+
   mkLitMatch : Maybe LitStyle → Maybe LiteralMatch
   mkLitMatch nothing             = nothing
   mkLitMatch (just natStyle)     = just (litMatch nothing  true)
@@ -195,10 +242,10 @@ private
     ... | oneLit  = go mz (just t) rest
     ... | _       = go mz mo rest
 
-  detectCSR : Term → TC (TheoryDetect × RingState)
-  detectCSR R = do
+  detectFor : RingSide → Term → TC (TheoryDetect × RingState)
+  detectFor side R = do
     R' ← headReduce 16 R
-    let slots         = csrSlots
+    let slots         = slotsFor side
     let concreteN     = length (filterᵇ slotIsConcrete slots)
     case R' of λ where
       (con _ args) → case Maybe.map Vec.toList (takeFirst concreteN (drop 2 (vArgs args))) of λ where
@@ -247,67 +294,98 @@ private
 -- Encoder construction.
 
 private
-  mkEncode : (R↓↓ R↓ : Term)
+  -- ℕ literal `n` rendered at the polynomial-coefficient type:
+  -- ℕ for CSR (`toTerm n`), ℤ for CR (wrapped with `+_`).
+  natLitTerm : RingSide → ℕ → Term
+  natLitTerm csr n = toTerm n
+  natLitTerm cr  n = con (quote +_) (toTerm n ⟨∷⟩ [])
+
+  mkEncode : (s : RingSide) → (R↓↓ R↓ : Term)
            → (numAtoms : ℕ) → Maybe LitStyle → TheoryEncode
-  mkEncode R↓↓ R↓ numAtoms litStyle = record
-    { opEncoders  = opAdd ∷ opMul ∷ opZero ∷ opOne ∷ []
+  mkEncode s R↓↓ R↓ numAtoms litStyle = record
+    { opEncoders  = ops s
     ; encodeNat   = encNat
     ; sucPeel     = sucPeelFn
     ; encodeVar   = encVar
-    ; encodeEq    = `:= R↓↓ `n
+    ; encodeEq    = `:= s R↓↓ `n
     ; finishSolve = finish
     }
     where
     `n = toTerm numAtoms
 
     opAdd : List Term → Term
-    opAdd (x ∷ y ∷ _) = `:+ R↓↓ `n x y
+    opAdd (x ∷ y ∷ _) = `:+ s R↓↓ `n x y
     opAdd _           = unknown
 
     opMul : List Term → Term
-    opMul (x ∷ y ∷ _) = `:* R↓↓ `n x y
+    opMul (x ∷ y ∷ _) = `:* s R↓↓ `n x y
     opMul _           = unknown
 
+    opSub : List Term → Term
+    opSub (x ∷ y ∷ _) = `:- R↓↓ `n x y
+    opSub _           = unknown
+
+    opNeg : List Term → Term
+    opNeg (x ∷ _) = `:-‿ R↓↓ `n x
+    opNeg _       = unknown
+
     opZero : List Term → Term
-    opZero _ = `con R↓↓ `n (toTerm 0)
+    opZero _ = `con s R↓↓ `n (natLitTerm s 0)
 
     opOne : List Term → Term
-    opOne _ = `con R↓↓ `n (toTerm 1)
+    opOne _ = `con s R↓↓ `n (natLitTerm s 1)
+
+    -- The order here MUST match what `detectCSR`/`detectCR` emit
+    -- for `operatorMatches`.
+    ops : RingSide → List (List Term → Term)
+    ops csr = opAdd ∷ opMul ∷ opZero ∷ opOne ∷ []
+    ops cr  = opAdd ∷ opMul ∷ opSub ∷ opNeg ∷ opZero ∷ opOne ∷ []
 
     encNat : ℕ → Term
-    encNat n = `con R↓↓ `n (toTerm n)
+    encNat n = `con s R↓↓ `n (natLitTerm s n)
 
     sucPeelFn : Term → Term
     sucPeelFn inner =
-      `:+ R↓↓ `n (`con R↓↓ `n (toTerm 1)) inner
+      `:+ s R↓↓ `n (`con s R↓↓ `n (natLitTerm s 1)) inner
 
     encVar : ℕ → Term
-    encVar i = `var R↓↓ `n (toFinTerm i)
+    encVar i = `var s R↓↓ `n (toFinTerm i)
 
     finish : Term → List Term → Term
     finish lambdaBody atoms =
-      def (quote Solver.solve) (2 ⋯⟅∷⟆ R↓ ⟨∷⟩ `n ⟨∷⟩ lambdaBody ⟨∷⟩ `refl R↓ ⟨∷⟩ List.map vArg atoms)
+      def (solveName s) (2 ⋯⟅∷⟆ R↓ ⟨∷⟩ `n ⟨∷⟩ lambdaBody ⟨∷⟩ `refl s R↓ ⟨∷⟩ List.map vArg atoms)
 
 ------------------------------------------------------------------------
 -- The macro.
 
 private
-  csrTheory : Theory
-  csrTheory = record
-    { bundleType = `CommutativeSemiring
+  ringTheory : RingSide → Theory
+  ringTheory s = record
+    { bundleType = bundleTypeOf s
     ; State      = RingState
-    ; detect     = detectCSR
-    ; encode     = λ R↓↓ R↓ n st → mkEncode R↓↓ R↓ n (RingState.litStyle st)
+    ; detect     = detectFor s
+    ; encode     = λ R↓↓ R↓ n st → mkEncode s R↓↓ R↓ n (RingState.litStyle st)
     }
+
+  detectSide : Term → TC (RingSide × Term)
+  detectSide R =
+    ((cr ,_) <$> checkType R (bundleTypeOf cr))
+    <|> ((csr ,_) <$> checkType R (bundleTypeOf csr))
+    <|> typeError
+        ( strErr "solve-≈: the bundle argument must be a "
+        ∷ strErr "`CommutativeSemiring` or a `CommutativeRing`, but "
+        ∷ termErr R
+        ∷ strErr " is neither."
+        ∷ [])
 
 solve-≈-macro : Term → Term → TC ⊤
 solve-≈-macro R hole = do
-  -- `commitTC` locks in `checkType`'s metavariable resolutions
+  -- `commitTC` locks in `detectSide`'s metavariable resolutions
   -- before further work that depends on `R`'s type being settled.
   -- `solveByTheory` deliberately doesn't redo the `checkType`.
-  R' ← checkType R `CommutativeSemiring
+  side , R' ← detectSide R
   commitTC
-  solveByTheory csrTheory R' hole
+  solveByTheory (ringTheory side) R' hole
 
 macro
   solve-≈ : Term → Term → TC ⊤

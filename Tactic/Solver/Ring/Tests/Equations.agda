@@ -10,11 +10,8 @@ open import Tactic.Solver.Ring using (solve-≈ ; module Solver)
 ------------------------------------------------------------------------
 -- Limitations
 --
--- 1. `solve-≈` currently only speaks the language of semirings, so
--- there's no negation.
---
--- 2. `solve-≈` is not going to help solving any metavariables. When
--- it is applied in any context where at least one side of the goal
+-- `solve-≈` is not going to help solving any metavariables. When it
+-- is applied in any context where at least one side of the goal
 -- contains an unresolved metavariable that only this solve call can
 -- determine, the macro emits a friendly type error. Note: this might
 -- be fixable, by making the solver aware of metas & letting it solve
