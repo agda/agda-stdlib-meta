@@ -41,7 +41,7 @@ open import Reflection.AST.Term
 open import Reflection.TCM.Syntax      hiding (_<$>_)
 open import Reflection.Utils.Args      using (vArgs; takeFirst)
 open import Reflection.Utils.Core      using (extractNat; pickDefName)
-open import Reflection.Utils.TCM       using (headReduce)
+open import Reflection.Utils.TCM       using (headReduce; headReducePeel)
 
 open import Tactic.Solver.Algebra
 import Tactic.Solver.Ring.IntegerCoefficients as IntC
@@ -250,10 +250,11 @@ private
     case R' of λ where
       (con _ args) → case Maybe.map Vec.toList (takeFirst concreteN (drop 2 (vArgs args))) of λ where
         (just rawOps) → do
-          concOps ← traverse ⦃ Functor-List ⦄ (headReduce 16) rawOps
+          concOps ← traverse ⦃ Functor-List ⦄ (headReducePeel 16) rawOps
           slotted ← zipSlots slots concOps
+          slottedLit ← traverse ⦃ Functor-List ⦄ (λ (s , t) → (s ,_) <$> headReduce 16 t) slotted
           let blockNs = collectDefNames concOps
-          let ls = maybe (uncurry detectLitStyle) nothing (findZeroOne slotted)
+          let ls = maybe (uncurry detectLitStyle) nothing (findZeroOne slottedLit)
           pure
             ( record
                 { operatorMatches = List.map (λ (s , t) → opMatch t (slotArity s)) slotted

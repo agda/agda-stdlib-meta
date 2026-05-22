@@ -54,3 +54,20 @@ mutual
     t'  ← headReduce k t
     as' ← reduceArgs k as
     pure (arg i t' ∷ as')
+
+-- Like `headReduce`, but stops at a nullary `def` whose body is not
+-- itself a nullary `def`.
+headReducePeel : ℕ → Term → TC Term
+headReducePeel 0       t = pure t
+headReducePeel (suc k) t@(def nm []) = do
+  d ← getDefinition nm
+  case d of λ where
+    (function (clause [] [] body@(def _ []) ∷ _)) → headReducePeel k body
+    _ → pure t
+headReducePeel (suc k) (def nm args) = do
+  args' ← reduceArgs k args
+  t' ← B.withReduceDefs (true , nm ∷ []) (reduce (def nm args'))
+  if t' =α= def nm args'
+    then pure t'
+    else headReducePeel k t'
+headReducePeel (suc _) t = pure t
