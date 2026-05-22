@@ -4,7 +4,7 @@ module Reflection.Utils.Args where
 open import Meta.Prelude
 open import Meta.Init
 
-open import Data.List using (map; zip; reverse)
+open import Data.List using (map; zip; reverse; length)
 open import Data.Fin using (toℕ)
 open import Data.Vec.Base using (Vec; []; _∷_)
 import Data.Vec.Base as Vec
@@ -13,6 +13,11 @@ open import Relation.Nullary using (Dec)
 
 open import Reflection.AST.Argument.Information
 import Reflection.AST.Argument.Visibility as Vis
+
+takeFirst : ∀ {ℓ} {A : Set ℓ} (n : ℕ) → List A → Maybe (Vec A n)
+takeFirst zero    _        = just []
+takeFirst (suc _) []       = nothing
+takeFirst (suc n) (x ∷ xs) = Maybe.map (x ∷_) (takeFirst n xs)
 
 getVisibility : Arg A → Visibility
 getVisibility (arg (arg-info v _) _) = v
@@ -36,11 +41,8 @@ vArgs = λ where
   (vArg x ∷ xs) → x ∷ vArgs xs
   (_      ∷ xs) → vArgs xs
 
-private
-  takeFirst : ∀ {ℓ} {A : Set ℓ} (n : ℕ) → List A → Maybe (Vec A n)
-  takeFirst zero    _        = just []
-  takeFirst (suc _) []       = nothing
-  takeFirst (suc n) (x ∷ xs) = Maybe.map (x ∷_) (takeFirst n xs)
+visibleCount : Args A → ℕ
+visibleCount = length ∘ vArgs
 
 -- Take the last `n` visible arguments of a `def`. Returns `nothing`
 -- if the term isn't a `def` or has fewer than `n` visible

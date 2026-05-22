@@ -4,7 +4,9 @@ module Reflection.Utils.Metas where
 open import Meta.Prelude
 open import Meta.Init
 
-open import Data.List using (_++_; mapMaybe)
+import Data.Bool.ListAction as B
+open import Data.List
+import Reflection.AST.Meta as Meta
 
 isMeta : Term → Bool
 isMeta = λ where
@@ -44,6 +46,7 @@ findMetaIds : Term → List Meta
 findMetaIds = mapMaybe metaId ∘ findMetas
 
 firstMeta : Term → Maybe Meta
-firstMeta t = case findMetaIds t of λ where
-  []      → nothing
-  (m ∷ _) → just m
+firstMeta = head ∘ findMetaIds
+
+shareMeta : List Meta → List Meta → Bool
+shareMeta xs ys = B.any (λ x → B.any (Meta._≡ᵇ_ x) ys) xs
