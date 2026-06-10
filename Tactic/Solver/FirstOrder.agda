@@ -18,19 +18,20 @@
 
 module Tactic.Solver.FirstOrder where
 
-open import Data.Bool             using (Bool; true; false; if_then_else_)
+open import Data.Bool             using (Bool; true; false; if_then_else_; not)
 open import Data.Empty            using (⊥)
 open import Data.List as List     using (List; []; _∷_; _++_; length; foldr; replicate)
-open import Data.Maybe            using (Maybe; just; nothing; from-just; is-just)
+open import Data.Maybe            using (Maybe; just; nothing; is-just)
 open import Data.Nat              using (ℕ; zero; suc; _+_)
 open import Data.Nat.Reflection   using (toTerm; toFinTerm)
+open import Data.Nat.Show         using (show)
 open import Data.Product          using (_×_; Σ; _,_; proj₁; proj₂)
-open import Data.String           using (String)
+open import Data.String as String using (String)
 open import Data.Sum              using (_⊎_)
 open import Data.Unit             using (⊤; tt)
 open import Data.Vec.Base as Vec  using (Vec)
 open import Function              using (case_of_; _$_)
-open import Level                 using (Level; _⊔_)
+open import Level                 using (Level; _⊔_; Lift; lift; lower)
 open import Relation.Nullary      using (¬_)
 open import Relation.Nullary.Decidable using (True; False; toWitness; toWitnessFalse)
 
@@ -376,6 +377,25 @@ private
   oracleDecFalse : Oracle
   oracleDecFalse t = tryElabAs (def (quote byDecFalse) []) (¬-of t)
 
+  -- The level-polymorphic units (`Data.Unit.Polymorphic.⊤`, `Data.Empty.
+  -- Polymorphic.⊥`) normalise to `Lift ℓ ⊤` / `Lift ℓ ⊥`, which the monomorphic
+  -- `⊤′`/`⊥′` of the Core cannot absorb (the interpretation lives in `Set₀`).
+  -- Two gated rules restore their logic as leaves: a `Lift ℓ ⊤` leaf is proved
+  -- outright (`lift tt`), and a `Lift ℓ ⊥` leaf yields the synthesised
+  -- hypothesis `¬ leaf` (via `lower`), from which the engine derives anything.
+  oracleLift : Oracle
+  oracleLift t@(def nm _) =
+    if nm Name.≡ᵇ quote Lift
+      then (case getVisibleArgs 2 t of λ where
+        (just (_ Vec.∷ def inner _ Vec.∷ Vec.[])) →
+          if isTop inner then trySynAs (con (quote lift) (con (quote tt) [] ⟨∷⟩ [])) t
+          else if isBot inner then
+            trySynAs (lam visible (abs "x" (def (quote lower) (var 0 [] ⟨∷⟩ [])))) (¬-of t)
+          else pure nothing
+        _ → pure nothing)
+      else pure nothing
+  oracleLift _ = pure nothing
+
   -- Run a whole sub-tactic on a fresh hole of the leaf's type, keeping the *raw*
   -- result: such proofs carry obligations Agda discharges at the enclosing
   -- `unify`, so `settle`'s meta-freeness check would wrongly reject them.
@@ -406,7 +426,8 @@ private
 
   -- The always-on oracles. `firstorderR` adds `oracleRing` on top.
   defaultOracles : List Oracle
-  defaultOracles = oracleRefl ∷ oracleInstance ∷ oracleDec ∷ oracleDecFalse ∷ []
+  defaultOracles =
+    oracleRefl ∷ oracleInstance ∷ oracleDec ∷ oracleDecFalse ∷ oracleLift ∷ []
 
   tryOracles : List Oracle → Type → TC (Maybe (Term × Term))
   tryOracles []       t = pure nothing
@@ -448,16 +469,40 @@ private
     rest ← lemmaHyps nb ls
     pure ((weaken nb l , weaken nb T) ∷ rest)
 
+  -- The unprovability report: definitive for the fuel-free decider (the engine
+  -- is complete for IPL), qualified for fuel-bounded `search`. The atom table is
+  -- printed because the second failure mode users hit is two leaves they expect
+  -- to coincide being reified as *distinct* atoms (not syntactically equal after
+  -- normalisation) — listing the atoms makes that visible at a glance.
+  unprovableMsg : Maybe ℕ → List Term → List ErrorPart
+  unprovableMsg mfuel atoms =
+    strErr (case mfuel of λ where
+      nothing  → "firstorder: the goal is not provable in intuitionistic\
+                 \ propositional logic over its atoms (the search is complete —\
+                 \ more fuel cannot help)."
+      (just k) → "firstorderN: no proof found within fuel "
+                   String.++ show k
+                   String.++ " (the fuel-free `firstorder` is complete).")
+    ∷ strErr "\nDistinct atoms seen (a leaf you expected to match another may\
+             \ differ syntactically):"
+    ∷ go 0 atoms
+    where
+    go : ℕ → List Term → List ErrorPart
+    go _ []       = []
+    go i (t ∷ ts) = strErr ("\n  [" String.++ show i String.++ "]  ")
+                  ∷ termErr t ∷ go (suc i) ts
+
   -- Build a *proof term* for an already-normalised `goal` (stated in the caller's
-  -- `withReduceDefs` context), discharging leaves with `oracles`. This is the core
-  -- shared by the macro entry points (`solveFOL`, below) and the recursive
-  -- ∃-introduction oracle (`oracleExistsRec`), which calls it on a witness's
-  -- residual goal. `oracles` is an opaque list, so `solveBody` itself is not
-  -- recursive — the fuel that bounds the ∃ recursion lives in `oracleExistsRec`.
+  -- `withReduceDefs` context), discharging leaves with the oracles `oraclesOf`
+  -- builds from the (weakened) lemma proof terms — they are an input here because
+  -- the quantifier oracles also *instantiate* the lemmas (`scanCtx` candidates),
+  -- and the weakening depends on the binder prefix only `solveBody` knows. This
+  -- is the core shared by the macro entry points (`solveFOL`, below) and the
+  -- quantifier oracles' `subSolve`, which calls it on sub-obligations.
   -- `nothing` for the fuel runs the complete `decideFast`; `just k` runs the
   -- bounded `search` at fuel `k` (`decideFast = search (μ …)`, identical work).
-  solveBody : List Oracle → List Term → Maybe ℕ → Term → TC Term
-  solveBody oracles lemmas mfuel goal = do
+  solveBody : (List Term → List Oracle) → List Term → Maybe ℕ → Term → TC Term
+  solveBody oraclesOf lemmas mfuel goal = do
     let binders , body = stripQ goal     -- strip the universal-quantifier prefix
     -- prepend the ambient hypotheses' types as `⇒`-antecedents; the proof of the
     -- resulting closed formula is then applied to the hypothesis variables.
@@ -470,7 +515,8 @@ private
     -- `withReduceDefs (false , [])` undoes the connective blocking *for the oracle
     -- elaboration*: the falsity oracle's `¬ P` target must reduce to `P → ⊥`.
     oHyps     ← extendCtx binders
-                  (withReduceDefs (false , []) (oracleHyps oracles atoms))
+                  (withReduceDefs (false , [])
+                    (oracleHyps (oraclesOf (List.map proj₁ uHyps)) atoms))
     let allHyps = baseHyps ++ oHyps
     let `n    = toTerm (length atoms)
     `body     ← reify depth atoms `n body
@@ -480,7 +526,18 @@ private
     let `srch = case mfuel of λ where
                   (just fuel) → def (quote search)     (`n ⟅∷⟆ toTerm fuel ⟨∷⟩ `Γ ⟨∷⟩ `φ ⟨∷⟩ [])
                   nothing     → def (quote decideFast) (`n ⟅∷⟆ `Γ ⟨∷⟩ `φ ⟨∷⟩ [])
-    let `drv  = def (quote from-just) (2 ⋯⟅∷⟆ `srch ⟨∷⟩ [])
+    -- Run the decision procedure *now* (the formula is closed, so this is pure
+    -- computation) and embed the found derivation directly: an unprovable goal
+    -- gets a real error instead of `from-just` dying at conversion time, and a
+    -- provable one re-checks the (small) derivation rather than re-running the
+    -- search.
+    `drv  ← normalise `srch >>= λ where
+      (con (quote just) args) → case vArgs args of λ where
+        (d ∷ _) → pure d
+        _       → typeError (strErr "firstorder: malformed search result" ∷ [])
+      (con (quote nothing) _) → typeError (unprovableMsg mfuel atoms)
+      r → typeError
+        (strErr "firstorder: search did not normalise to a constructor: " ∷ termErr r ∷ [])
     -- `solve`'s implicits (n, ℓ, φ) are all pinned by the environment and `drv`
     let proof = def (quote solve)  (mkEnv atoms ⟨∷⟩ `drv ⟨∷⟩
                                     List.map (λ h → vArg (proj₁ h)) allHyps)
@@ -502,14 +559,15 @@ private
       ∷ [])
     nothing  → pure tt
 
-  -- `lemmas` are extra hypotheses; `extra` are extra oracles.
-  solveFOL : List Term → List Oracle → Maybe ℕ → Term → TC ⊤
-  solveFOL lemmas extra mfuel hole = withReduceDefs (false , connNames) $ do
+  -- `lemmas` are extra hypotheses; `extraOf` builds extra oracles from their
+  -- (weakened) proof terms.
+  solveFOL : List Term → (List Term → List Oracle) → Maybe ℕ → Term → TC ⊤
+  solveFOL lemmas extraOf mfuel hole = withReduceDefs (false , connNames) $ do
     -- Normalise with the connectives blocked (see `connNames`), so a goal stated
     -- through definitional aliases unfolds down to recognisable structure.
     goal  ← inferType hole >>= normalise
     _     ← guardNoMetas (proj₂ (stripQ goal))
-    proof ← solveBody (defaultOracles ++ extra) lemmas mfuel goal
+    proof ← solveBody (λ ls → defaultOracles ++ extraOf ls) lemmas mfuel goal
     unify hole proof
 
 ------------------------------------------------------------------------
@@ -524,45 +582,77 @@ private
 private
   -- Solve a sub-obligation `ty` in the current context with the oracle list `sub`.
   subSolve : List Oracle → Type → TC Term
-  subSolve sub ty = withReduceDefs (false , connNames) (solveBody sub [] nothing ty)
+  subSolve sub ty = withReduceDefs (false , connNames) (solveBody (λ _ → sub) [] nothing ty)
 
-  -- Fill every still-unsolved metavariable in an instantiation by solving its type
-  -- with `sub` — the *hypothesis* arguments the conclusion did not pin (`f a ?`
-  -- with `? : P a` ↦ `f a p`).
-  fillMetas : List Oracle → List Term → TC ⊤
-  fillMetas sub []       = pure tt
-  fillMetas sub (m ∷ ms) = do
-    ty ← inferType m >>= normalise
-    rp ← subSolve sub ty
-    unify m rp
-    fillMetas sub ms
+  -- Apply a head term to further arguments by extending its spine (lemma
+  -- candidates are variables/definitions/constructors; anything else opts out).
+  applySpine : Term → List (Arg Term) → Maybe Term
+  applySpine (var i as)  bs = just (var i (as ++ bs))
+  applySpine (def f as)  bs = just (def f (as ++ bs))
+  applySpine (con c as)  bs = just (con c (as ++ bs))
+  applySpine (meta x as) bs = just (meta x (as ++ bs))
+  applySpine _           _  = nothing
 
-  -- Enumerate candidate instantiations: every context variable (innermost
-  -- first) applied to `k` fresh metavariables, for each `k < ar`; the first
-  -- candidate `try` accepts wins.
-  scanCtx : ℕ → (Term → TC (Maybe (Term × Term))) → TC (Maybe (Term × Term))
-  scanCtx ar try = length <$> getContext >>= goVar
+  -- Enumerate candidate instantiations — first the supplied lemma terms
+  -- `cands`, then every context variable (innermost first) — each applied to
+  -- `k` fresh metavariables for `k < ar`; the first candidate `try` accepts
+  -- wins.
+  scanCtx : List Term → ℕ → (Term → TC (Maybe (Term × Term))) → TC (Maybe (Term × Term))
+  scanCtx cands ar try = goCands cands orElse (length <$> getContext >>= goVar)
     where
-    goAr : ℕ → ℕ → TC (Maybe (Term × Term))
-    goAr i zero    = pure nothing
-    goAr i (suc k) = try (var i (replicate k (vArg unknown))) orElse goAr i k
+    goAr : Term → ℕ → TC (Maybe (Term × Term))
+    goAr h zero    = pure nothing
+    goAr h (suc k) = (case applySpine h (replicate k (vArg unknown)) of λ where
+        (just cand) → try cand
+        nothing     → pure nothing)
+      orElse goAr h k
+    goCands : List Term → TC (Maybe (Term × Term))
+    goCands []       = pure nothing
+    goCands (c ∷ cs) = goAr c ar orElse goCands cs
     goVar : ℕ → TC (Maybe (Term × Term))
     goVar zero    = pure nothing
-    goVar (suc i) = goAr i ar orElse goVar i
+    goVar (suc i) = goAr (var i []) ar orElse goVar i
 
-  -- ∀-elimination: instantiate a context hypothesis `f` applied to fresh metas.
-  -- `checkType` pins the witnesses the leaf determines; any remaining argument
-  -- metas (hypotheses the leaf does not pin) are discharged by `fillMetas` using
-  -- `sub`. `f : ∀ x → P x`, leaf `P a` ↦ `f a`; `f : ∀ x → P x → Q x`, leaf `Q a`
-  -- with `p : P a` ↦ `f a p`. Arities 0‥5 are tried.
-  oracleInstWith : List Oracle → Oracle
-  oracleInstWith sub t = scanCtx 6 tryInst
+  -- Fill the still-unsolved metavariables of an instantiation. Two phases:
+  -- a meta whose type still *mentions* other metas (`h : a < ?j`) is pinned by
+  -- direct unification with a candidate, solving the value-metas (`?j`) as a
+  -- side effect — this is what lets a transitivity lemma chain without
+  -- consuming a quantifier-recursion level (`subSolve` remains the fallback).
+  -- The ground-typed rest (the hypothesis arguments proper, `h : P a`) is then
+  -- solved with `sub`. Solving a ground value-meta like `?j : ℕ` head-on would
+  -- commit to an arbitrary inhabitant; a meta solved along the way is skipped.
+  fillMetas : List Term → List Oracle → List Term → TC ⊤
+  fillMetas cands sub ms = fillPhase true ms >> fillPhase false ms
+    where
+    fillPhase : Bool → List Term → TC ⊤
+    fillPhase phase []       = pure tt
+    fillPhase phase (m ∷ ms) = do
+      _ ← normalise m >>= λ where
+            m′@(meta _ _) → do
+              ty ← inferType m′ >>= normalise
+              if (if phase then is-just (firstMeta ty) else not (is-just (firstMeta ty)))
+                then (if phase
+                  then (scanCtx cands 3 (λ c → tryUnifyAs c ty) >>= λ where
+                          (just (pf , _)) → unify m′ pf
+                          nothing         → do rp ← subSolve sub ty; unify m′ rp)
+                  else (do rp ← subSolve sub ty; unify m′ rp))
+                else pure tt
+            _ → pure tt        -- solved as a side effect of an earlier fill
+      fillPhase phase ms
+
+  -- ∀-elimination: instantiate a supplied lemma or context hypothesis `f`
+  -- applied to fresh metas. `checkType` pins the witnesses the leaf determines;
+  -- any remaining argument metas (hypotheses the leaf does not pin) are
+  -- discharged by `fillMetas`. `f : ∀ x → P x`, leaf `P a` ↦ `f a`;
+  -- `f : ∀ x → P x → Q x`, leaf `Q a` with `p : P a` ↦ `f a p`. Arities 0‥5.
+  oracleInstWith : List Term → List Oracle → Oracle
+  oracleInstWith cands sub t = scanCtx cands 6 tryInst
     where
     tryInst : Term → TC (Maybe (Term × Term))
     tryInst cand = speculate $ do
       pf ← checkType cand t
       pf ← normalise pf
-      fillMetas sub (findMetas pf)
+      fillMetas cands sub (findMetas pf)
       settle pf t
 
   -- ∃-introduction with a sub-solved proof component. For a `Σ D B` leaf it
@@ -572,17 +662,17 @@ private
   --   (B) by `subSolve`-ing the residual `B w` once `w` is meta-free — so a
   --       compound predicate (`P x × Q x`) is built by the engine and a nested
   --       existential by a deeper ∃ step (when `sub` itself contains this oracle).
-  oracleExistsWith : List Oracle → Oracle
-  oracleExistsWith sub t@(def nm _) =
+  oracleExistsWith : List Term → List Oracle → Oracle
+  oracleExistsWith cands sub t@(def nm _) =
     if nm Name.≡ᵇ quote Σ
-      then scanCtx 3 (λ w → direct w orElse residual w)
+      then scanCtx cands 3 (λ w → direct w orElse residual w)
       else pure nothing
     where
     pairT : Term → Term → Term
     pairT w h = con (quote _,_) (4 ⋯⟅∷⟆ w ⟨∷⟩ h ⟨∷⟩ [])
 
     direct : Term → TC (Maybe (Term × Term))
-    direct w = scanCtx 3 (λ h → tryUnifyAs (pairT w h) t)
+    direct w = scanCtx cands 3 (λ h → tryUnifyAs (pairT w h) t)
 
     residual : Term → TC (Maybe (Term × Term))
     residual w = speculate $ do
@@ -596,50 +686,58 @@ private
           rp ← subSolve sub res
           unify hM rp
           settle pm t
-  oracleExistsWith _ _ = pure nothing
+  oracleExistsWith _ _ _ = pure nothing
 
   -- The quantifier oracle stack unrolled to depth `fuel`: at each level the two
   -- oracles get the *next-shallower* stack for their sub-obligations, and at the
   -- bottom (`zero`) sub-obligations see only the default oracles + the engine. This
   -- single structural recursion on `fuel` is the only recursion involved, so the
-  -- termination check is trivial.
-  qExtraAt : ℕ → List Oracle
-  qExtraAt zero    = []
-  qExtraAt (suc f) = let sub = defaultOracles ++ qExtraAt f
-                     in oracleInstWith sub ∷ oracleExistsWith sub ∷ []
+  -- termination check is trivial. `cands` (the supplied lemma terms) flow to
+  -- every level, so a lemma can be instantiated by a sub-solve too.
+  qExtraAt : List Term → ℕ → List Oracle
+  qExtraAt cands zero    = []
+  qExtraAt cands (suc f) = let sub = defaultOracles ++ qExtraAt cands f
+                           in oracleInstWith cands sub ∷ oracleExistsWith cands sub ∷ []
 
 ------------------------------------------------------------------------
 -- X. The macros
 
+private
+  -- shared ℕ-literal parsing for the `…N` variants
+  litFuel : String → Term → TC ℕ
+  litFuel who `fuel = case extractNat `fuel of λ where
+    (just fuel) → pure fuel
+    nothing     → typeError
+      (strErr (who String.++ ": the fuel argument must be a ℕ literal") ∷ [])
+
 macro
   -- complete, fuel-free
   firstorder : Term → TC ⊤
-  firstorder = solveFOL [] [] nothing
+  firstorder = solveFOL [] (λ _ → []) nothing
 
   -- with an explicit fuel bound (a ℕ literal)
   firstorderN : Term → Term → TC ⊤
   firstorderN `fuel hole = do
-    just fuel ← pure (extractNat `fuel)
-      where nothing → typeError (strErr "firstorderN: first argument must be a ℕ literal" ∷ [])
-    solveFOL [] [] (just fuel) hole
+    fuel ← litFuel "firstorderN" `fuel
+    solveFOL [] (λ _ → []) (just fuel) hole
 
   -- as `firstorder`, but additionally discharges `_≡_` leaves with the ring
   -- solver over the given bundle `R` (a `CommutativeSemiring`/`CommutativeRing`).
   firstorderR : Term → Term → TC ⊤
-  firstorderR R hole = solveFOL [] (oracleRing R ∷ []) nothing hole
+  firstorderR R hole = solveFOL [] (λ _ → oracleRing R ∷ []) nothing hole
 
   -- as `firstorder`, but with extra user-supplied lemmas added to the available
   -- hypotheses. Pass one lemma directly (`firstorderWith p`) or several as a
   -- `_◂_`-tuple (`firstorderWith (p ◂ q ◂ r)`); the lemmas may have different
   -- types and live at different universe levels.
   firstorderWith : Term → Term → TC ⊤
-  firstorderWith `lemmas hole = solveFOL (parseLemmas depth `lemmas) [] nothing hole
+  firstorderWith `lemmas hole = solveFOL (parseLemmas depth `lemmas) (λ _ → []) nothing hole
 
   -- as `firstorder`, but also discharges leaves by recursive constructor search
   -- (`Tactic.Constrs`) — for inductively-defined propositions (`0 ≤ n`, `Even 4`,
   -- `x ∈ xs`). Opt-in because it will inhabit any constructor-solvable leaf.
   firstorderC : Term → TC ⊤
-  firstorderC hole = solveFOL [] (oracleConstrs 10 ∷ []) nothing hole
+  firstorderC hole = solveFOL [] (λ _ → oracleConstrs 10 ∷ []) nothing hole
 
   -- as `firstorder`, but with quantifier reasoning over *context* hypotheses:
   -- ∀-elimination (instantiate `f : ∀ x → P x` to discharge a leaf `P a`) and
@@ -647,4 +745,29 @@ macro
   -- both the witness is found by unification; the ∀-hypothesis / ∃-witness proof
   -- must be a local argument. Opt-in, as it scans the local context per leaf.
   firstorderQ : Term → TC ⊤
-  firstorderQ hole = solveFOL [] (qExtraAt 2) nothing hole
+  firstorderQ hole = solveFOL [] (λ ls → qExtraAt ls 2) nothing hole
+
+  -- as `firstorderQ`, but with an explicit quantifier-recursion depth (a ℕ
+  -- literal). Each level is one instantiation step whose sub-obligations may
+  -- recurse one level shallower, so e.g. chaining a transitivity lemma `n`
+  -- times needs depth `n`. Cost grows quickly with depth; the default is 2.
+  firstorderQN : Term → Term → TC ⊤
+  firstorderQN `fuel hole = do
+    fuel ← litFuel "firstorderQN" `fuel
+    solveFOL [] (λ ls → qExtraAt ls fuel) nothing hole
+
+  -- `firstorderWith` and `firstorderQ` combined: the supplied lemmas serve both
+  -- as extra hypotheses *and* as instantiation candidates for the quantifier
+  -- oracles — so a universally quantified lemma need not be instantiated by
+  -- hand: `firstorderQWith <-trans` finds `<-trans p q` itself, and chains it
+  -- (to the quantifier-recursion depth, here the default 2).
+  firstorderQWith : Term → Term → TC ⊤
+  firstorderQWith `lemmas hole =
+    solveFOL (parseLemmas depth `lemmas) (λ ls → qExtraAt ls 2) nothing hole
+
+  -- as `firstorderQWith` with an explicit quantifier-recursion depth: a chain
+  -- of `n` lemma applications needs depth `n`.
+  firstorderQNWith : Term → Term → Term → TC ⊤
+  firstorderQNWith `fuel `lemmas hole = do
+    fuel ← litFuel "firstorderQNWith" `fuel
+    solveFOL (parseLemmas depth `lemmas) (λ ls → qExtraAt ls fuel) nothing hole

@@ -2,7 +2,7 @@
 --------------------------------------------------------------------------------
 -- Capabilities and limitations of the `firstorder` solver.
 --
--- PART 1 (capabilities): 100 goals proved automatically by the `firstorder`
+-- PART 1 (capabilities): 106 goals proved automatically by the `firstorder`
 -- macro — propositional reasoning over →, ×, ⊎, ¬, ⊤, ⊥ (complete for
 -- intuitionistic propositional logic), universal-quantifier prefixes, ambient
 -- hypotheses (local variables of propositional type), definitional aliases of
@@ -13,10 +13,15 @@
 -- ring/semiring equations over a bundle (`firstorderR R`); user-supplied
 -- lemmas (`firstorderWith`); and — opt-in — leaves solved by recursive
 -- constructor search (`firstorderC`, inductive predicates) or by quantifier
--- reasoning over context hypotheses (`firstorderQ`, ∀-elim and ∃-intro — both
--- recursive: an instantiation's leftover hypothesis arguments and an existential
--- witness's residual goal are themselves solved recursively, so e.g.
--- `(∀ x → P x → Q x) → P a → Q a` and compound/nested existentials go through).
+-- reasoning over context hypotheses (`firstorderQ`/`firstorderQN n`, ∀-elim and
+-- ∃-intro — both recursive: an instantiation's leftover hypothesis arguments and
+-- an existential witness's residual goal are themselves solved recursively, so
+-- e.g. `(∀ x → P x → Q x) → P a → Q a` and compound/nested existentials go
+-- through; `firstorderQWith`/`firstorderQNWith n` additionally instantiate the
+-- *supplied lemmas*, so `firstorderQWith <-trans` chains transitivity unaided).
+-- The level-polymorphic `⊤`/`⊥` are handled by gated oracles. An unprovable
+-- goal reports a real error — definitive unprovability plus the atom table —
+-- instead of an unsolved `from-just` constraint.
 -- Every atom
 -- carries its own universe level, so the goals below are stated
 -- level-polymorphically and freely mix levels (with `⊤`/`⊥` staying the genuine
@@ -443,6 +448,41 @@ module Quantifiers {D : Set} {P Q : D → Set} {R : D → D → Set} where
   -- `f a` from instantiating the universal hypothesis.
   ∀-then-∃ : (∀ x → P x) → (a : D) → ∃ P
   ∀-then-∃ f a = firstorderQ
+
+  -- explicit quantifier-recursion depth (`firstorderQ` defaults to 2)
+  ∀-inst-fuel : (∀ x → P x) → (a : D) → P a
+  ∀-inst-fuel f a = firstorderQN 1
+
+-- The level-polymorphic units (`Data.Unit.Polymorphic.⊤`, which normalises to
+-- `Lift ℓ ⊤`, and dually `⊥`) are handled by gated oracles: a `Lift ℓ ⊤` leaf is
+-- proved outright, and a `Lift ℓ ⊥` hypothesis is absurd. (They cannot be the
+-- `⊤′`/`⊥′` connectives: the Core interpretation is monomorphic.)
+module PolyUnits {ℓ : Level} {A : Set} where
+  open import Data.Unit.Polymorphic  renaming (⊤ to ⊤ₚ)
+  open import Data.Empty.Polymorphic renaming (⊥ to ⊥ₚ)
+
+  top-poly : A → A × ⊤ₚ {ℓ}
+  top-poly a = firstorder
+
+  bot-poly : ⊥ₚ {ℓ} → A
+  bot-poly b = firstorder
+
+-- `firstorderQWith` (and `firstorderQNWith n`): the supplied lemmas are both
+-- extra hypotheses and *instantiation candidates* for the quantifier oracles —
+-- a universally quantified lemma is applied (and chained) automatically.
+module LemmaInstantiation where
+  open import Data.Nat            using (ℕ; _<_)
+  open import Data.Nat.Properties using (<-trans)
+
+  module _ (a b c d e : ℕ) (p : a < b) (q : b < c) (r : c < d) (s : d < e) where
+    chain3 : a < d                        -- <-trans p (<-trans q r), found alone
+    chain3 = firstorderQWith <-trans
+
+    chain4 : a < e                        -- three compositions need depth 3
+    chain4 = firstorderQNWith 3 <-trans
+
+    ∃-chain : ∃ (λ x → a < x)             -- lemma candidates feed the ∃-oracle too
+    ∃-chain = firstorderQWith <-trans
 
 --------------------------------------------------------------------------------
 -- Real lemmas from the standard library, re-proved by a single tactic call.
