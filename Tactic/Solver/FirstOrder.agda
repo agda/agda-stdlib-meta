@@ -20,7 +20,7 @@ module Tactic.Solver.FirstOrder where
 
 open import Data.Bool             using (Bool; true; false; if_then_else_; not)
 open import Data.Empty            using (⊥)
-open import Data.List as List     using (List; []; _∷_; _++_; length; foldr; replicate)
+open import Data.List as List     using (List; []; _∷_; _++_; length; foldr; replicate; filterᵇ)
 open import Data.Maybe            using (Maybe; just; nothing; is-just)
 open import Data.Nat              using (ℕ; zero; suc; _+_)
 open import Data.Nat.Reflection   using (toTerm; toFinTerm)
@@ -514,9 +514,20 @@ private
     -- discharge what the oracles can; their proofs join the ambient hypotheses.
     -- `withReduceDefs (false , [])` undoes the connective blocking *for the oracle
     -- elaboration*: the falsity oracle's `¬ P` target must reduce to `P → ⊥`.
+    -- The always-on oracles see every atom (the falsity/lift rules act on
+    -- *hypothesis* atoms). The extra oracles — quantifier instantiation, ring,
+    -- constructor search — only see atoms that are not already hypotheses or
+    -- default-discharged: they could only re-prove those redundantly, and the
+    -- pruning is what keeps the recursive quantifier oracles linear along a
+    -- lemma chain instead of re-searching every hypothesis atom at every level.
     oHyps     ← extendCtx binders
-                  (withReduceDefs (false , [])
-                    (oracleHyps (oraclesOf (List.map proj₁ uHyps)) atoms))
+                  (withReduceDefs (false , []) (do
+                    dHyps ← oracleHyps defaultOracles atoms
+                    let covered = hTys ++ List.map proj₂ dHyps
+                    let rest    = filterᵇ
+                          (λ a → not (is-just (findAtomIndex a covered))) atoms
+                    eHyps ← oracleHyps (oraclesOf (List.map proj₁ uHyps)) rest
+                    pure (dHyps ++ eHyps)))
     let allHyps = baseHyps ++ oHyps
     let `n    = toTerm (length atoms)
     `body     ← reify depth atoms `n body
@@ -567,7 +578,7 @@ private
     -- through definitional aliases unfolds down to recognisable structure.
     goal  ← inferType hole >>= normalise
     _     ← guardNoMetas (proj₂ (stripQ goal))
-    proof ← solveBody (λ ls → defaultOracles ++ extraOf ls) lemmas mfuel goal
+    proof ← solveBody extraOf lemmas mfuel goal
     unify hole proof
 
 ------------------------------------------------------------------------
@@ -690,13 +701,14 @@ private
 
   -- The quantifier oracle stack unrolled to depth `fuel`: at each level the two
   -- oracles get the *next-shallower* stack for their sub-obligations, and at the
-  -- bottom (`zero`) sub-obligations see only the default oracles + the engine. This
-  -- single structural recursion on `fuel` is the only recursion involved, so the
-  -- termination check is trivial. `cands` (the supplied lemma terms) flow to
-  -- every level, so a lemma can be instantiated by a sub-solve too.
+  -- bottom (`zero`) sub-obligations see only the default oracles + the engine
+  -- (`solveBody` always runs the defaults itself). This single structural
+  -- recursion on `fuel` is the only recursion involved, so the termination
+  -- check is trivial. `cands` (the supplied lemma terms) flow to every level,
+  -- so a lemma can be instantiated by a sub-solve too.
   qExtraAt : List Term → ℕ → List Oracle
   qExtraAt cands zero    = []
-  qExtraAt cands (suc f) = let sub = defaultOracles ++ qExtraAt cands f
+  qExtraAt cands (suc f) = let sub = qExtraAt cands f
                            in oracleInstWith cands sub ∷ oracleExistsWith cands sub ∷ []
 
 ------------------------------------------------------------------------
