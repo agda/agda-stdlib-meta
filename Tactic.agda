@@ -28,4 +28,7 @@ open import Tactic.Solver.Ring.Tests
 
 open import Tactic.Solver.FirstOrder
 open import Tactic.Solver.FirstOrder.Tests
+-- Tactic.Solver.FirstOrder.Tests.Colist is deliberately not imported here: it
+-- needs `--guardedness` (for `Codata.Musical.Colist`), which is infective and
+-- would impose the flag on every importer of `Tactic`. Check it standalone.
 import Tactic.FirstOrder.Decide

@@ -294,6 +294,12 @@ decide Γ G = searchA Γ G (<-wellFounded (μ Γ G))
 -- the recursion only reaches the real (small) proof depth, never the ceiling.
 -- The well-founded development above is what licenses this — it shows every rule
 -- strictly decreases μ, so μ is always enough fuel.
+--
+-- Measured (see `Tactic.FirstOrder.Bench`): on balanced ∧-tree goals the time
+-- tracks the leaf count, not μ, even as μ ranges over hundreds of orders of
+-- magnitude — 256 leaves (μ≈10²⁴³) 76ms, 512 (10⁴⁸⁸) 185ms, 1024 (10⁹⁷⁶) 436ms,
+-- 2048 (10¹⁹⁵³) 1020ms — i.e. ~linear in search size. A 400-deep implication
+-- chain (μ≈10¹⁹¹) is sub-millisecond.
 --------------------------------------------------------------------------------
 
 decideFast : ∀ {n} (Γ : List (Formula n)) (G : Formula n) → Maybe (Γ ⊢ G)
