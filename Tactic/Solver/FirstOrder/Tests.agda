@@ -2,7 +2,7 @@
 --------------------------------------------------------------------------------
 -- Capabilities and limitations of the `firstorder` solver.
 --
--- PART 1 (capabilities): 106 goals proved automatically by the `firstorder`
+-- PART 1 (capabilities): 115 goals proved automatically by the `firstorder`
 -- macro — propositional reasoning over →, ×, ⊎, ¬, ⊤, ⊥ (complete for
 -- intuitionistic propositional logic), universal-quantifier prefixes, ambient
 -- hypotheses (local variables of propositional type), definitional aliases of
@@ -483,6 +483,54 @@ module LemmaInstantiation where
 
     ∃-chain : ∃ (λ x → a < x)             -- lemma candidates feed the ∃-oracle too
     ∃-chain = firstorderQWith <-trans
+
+-- Record introduction and elimination (`firstorderQ`):
+--   * a leaf headed by a record — or a data type with a *unique* constructor —
+--     is proved by introducing the constructor and solving the fields with the
+--     engine; `_⇔_`/`Equivalence` goes through `mk⇔`, so its congruence fields
+--     come for free and only `to`/`from` remain;
+--   * a *hypothesis* of record type is expanded into its field projections
+--     (`e : A ⇔ B` yields `to e : A → B` as a usable ⇒-antecedent), and the
+--     projections also serve as instantiation candidates — for `e : ∃ P` that
+--     is ∃-elimination (`proj₂ e : P (proj₁ e)` pins witnesses).
+module RecordIntroElim {A B C D : Set} {P : D → Set} where
+  open import Function.Bundles using (_⇔_)
+
+  ⇔-refl : A ⇔ A
+  ⇔-refl = firstorderQ
+
+  ×-comm-⇔ : (A × B) ⇔ (B × A)
+  ×-comm-⇔ = firstorderQ
+
+  deMorgan-⇔ : (¬ (A ⊎ B)) ⇔ (¬ A × ¬ B)
+  deMorgan-⇔ = firstorderQ
+
+  curry-⇔ : (A × B → C) ⇔ (A → B → C)
+  curry-⇔ = firstorderQ
+
+  -- = Data.Sum.Function.Propositional._⊎-⇔_ (stdlib proves it via ⊎-map +
+  -- mk⇔ plumbing); intro and elim combined.
+  ⊎-⇔ : A ⇔ B → C ⇔ D → (A ⊎ C) ⇔ (B ⊎ D)
+  ⊎-⇔ e f = firstorderQ
+
+  -- = Data.Product.Function.NonDependent.Propositional._×-⇔_
+  ×-⇔ : A ⇔ B → C ⇔ D → (A × C) ⇔ (B × D)
+  ×-⇔ e f = firstorderQ
+
+  ⇔-trans : A ⇔ B → B ⇔ C → A ⇔ C
+  ⇔-trans e f = firstorderQ
+
+  -- ∃-elimination: the Σ-hypothesis's projections do the work
+  ∃-elim : ∃ P → (∀ x → P x → C) → C
+  ∃-elim e g = firstorderQ
+
+  -- a generic single-constructor record, built from engine-solved fields
+  record Wrap (X : Set) : Set where
+    constructor wrap
+    field unwrap : X
+
+  wrap-intro : A → Wrap ((A × B) ⊎ A)
+  wrap-intro a = firstorderQ
 
 --------------------------------------------------------------------------------
 -- Real lemmas from the standard library, re-proved by a single tactic call.

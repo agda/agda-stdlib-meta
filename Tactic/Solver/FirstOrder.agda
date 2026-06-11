@@ -31,6 +31,7 @@ open import Data.Sum              using (_⊎_)
 open import Data.Unit             using (⊤; tt)
 open import Data.Vec.Base as Vec  using (Vec)
 open import Function              using (case_of_; _$_)
+open import Function.Bundles      using (Equivalence; mk⇔)
 open import Level                 using (Level; _⊔_; Lift; lift; lower)
 open import Relation.Nullary      using (¬_)
 open import Relation.Nullary.Decidable using (True; False; toWitness; toWitnessFalse)
@@ -280,6 +281,36 @@ private
       rest ← go r (suc i)
       pure (if ok then (var (i + nb) [] , weaken nb Tᵢ) ∷ rest else rest)
 
+  -- A hypothesis of record type is also usable through its fields: `e : A ⇔ B`
+  -- yields `Equivalence.to e : A → B` (and `from`, …), and `e : ∃ P` yields
+  -- `proj₁ e` and `proj₂ e : P (proj₁ e)` — record elimination, and in
+  -- particular ∃-elimination, for free. One level deep; the projected types
+  -- re-enter the formula like any hypothesis, so an implication field becomes
+  -- a usable ⇒-antecedent rather than part of an opaque atom.
+  projectHyps : List (Term × Term) → TC (List (Term × Term))
+  projectHyps []               = pure []
+  projectHyps ((pf , ty) ∷ hs) = do
+    here ← case ty of λ where
+      (def nm _) → catchTC
+        (getDefinition nm >>= λ where
+          (record-type _ fs) → projs fs
+          _                  → pure [])
+        (pure [])
+      _ → pure []
+    rest ← projectHyps hs
+    pure (here ++ rest)
+    where
+    projs : List (Arg Name) → TC (List (Term × Term))
+    projs []       = pure []
+    projs (f ∷ fs) = do
+      rest ← projs fs
+      catchTC
+        (do let p = def (unArg f) (vArg pf ∷ [])
+            fty ← inferType p >>= normalise
+            ok  ← isProp fty
+            pure (if ok then (p , fty) ∷ rest else rest))
+        (pure rest)
+
 ------------------------------------------------------------------------
 -- VII. Leaf oracles
 --
@@ -508,7 +539,10 @@ private
     -- resulting closed formula is then applied to the hypothesis variables.
     hyps      ← contextHyps (length binders)
     uHyps     ← lemmaHyps (length binders) lemmas
-    let baseHyps = hyps ++ uHyps
+    -- field projections of record-typed hypotheses (already stated in the
+    -- binder-extended context, so no further weakening)
+    pHyps     ← extendCtx binders (projectHyps (hyps ++ uHyps))
+    let baseHyps = hyps ++ uHyps ++ pHyps
     let hTys  = List.map proj₂ baseHyps
     atoms     ← collect depth body [] >>= collectList depth hTys
     -- discharge what the oracles can; their proofs join the ambient hypotheses.
@@ -526,7 +560,10 @@ private
                     let covered = hTys ++ List.map proj₂ dHyps
                     let rest    = filterᵇ
                           (λ a → not (is-just (findAtomIndex a covered))) atoms
-                    eHyps ← oracleHyps (oraclesOf (List.map proj₁ uHyps)) rest
+                    -- instantiation candidates: the lemmas and the record-field
+                    -- projections (so e.g. `proj₂ e : P (proj₁ e)` can pin an
+                    -- instantiation's witness — ∃-elimination)
+                    eHyps ← oracleHyps (oraclesOf (List.map proj₁ (uHyps ++ pHyps))) rest
                     pure (dHyps ++ eHyps)))
     let allHyps = baseHyps ++ oHyps
     let `n    = toTerm (length atoms)
@@ -651,20 +688,23 @@ private
             _ → pure tt        -- solved as a side effect of an earlier fill
       fillPhase phase ms
 
+  -- Elaborate the candidate `cand` against the leaf `t`, discharging whatever
+  -- argument metas the leaf does not pin with `fillMetas`; accept if fully
+  -- resolved. The work-horse shared by instantiation and introduction.
+  tryFill : List Term → List Oracle → Term → Type → TC (Maybe (Term × Term))
+  tryFill cands sub cand t = speculate $ do
+    pf ← checkType cand t
+    pf ← normalise pf
+    fillMetas cands sub (findMetas pf)
+    settle pf t
+
   -- ∀-elimination: instantiate a supplied lemma or context hypothesis `f`
   -- applied to fresh metas. `checkType` pins the witnesses the leaf determines;
   -- any remaining argument metas (hypotheses the leaf does not pin) are
   -- discharged by `fillMetas`. `f : ∀ x → P x`, leaf `P a` ↦ `f a`;
   -- `f : ∀ x → P x → Q x`, leaf `Q a` with `p : P a` ↦ `f a p`. Arities 0‥5.
   oracleInstWith : List Term → List Oracle → Oracle
-  oracleInstWith cands sub t = scanCtx cands 6 tryInst
-    where
-    tryInst : Term → TC (Maybe (Term × Term))
-    tryInst cand = speculate $ do
-      pf ← checkType cand t
-      pf ← normalise pf
-      fillMetas cands sub (findMetas pf)
-      settle pf t
+  oracleInstWith cands sub t = scanCtx cands 6 (λ c → tryFill cands sub c t)
 
   -- ∃-introduction with a sub-solved proof component. For a `Σ D B` leaf it
   -- enumerates a witness `w` from the context and discharges `B w` two ways:
@@ -699,6 +739,44 @@ private
           settle pm t
   oracleExistsWith _ _ _ = pure nothing
 
+  -- count the visible arguments of a (constructor's) type
+  visibleArity : Name → TC ℕ
+  visibleArity c = go <$> getType c
+    where
+    go : Term → ℕ
+    go (pi (arg (arg-info visible _) _) (abs _ b)) = suc (go b)
+    go (pi _                            (abs _ b)) = go b
+    go _ = 0
+
+  -- The introduction form for a leaf head, if it has a canonical one: the
+  -- constructor of a record type, or of a data type with a *unique*
+  -- constructor (no choice is made, so this stays predictable). `Σ` is the
+  -- ∃-oracle's job (its witness needs enumeration, not a fresh meta), and
+  -- `Equivalence` (the head of `_⇔_`) goes through the smart constructor
+  -- `mk⇔`, whose congruence fields are `≡.cong` — only `to`/`from` remain.
+  introHead : Name → TC (Maybe (Term × ℕ))
+  introHead nm =
+    if nm Name.≡ᵇ quote Σ then pure nothing
+    else if nm Name.≡ᵇ quote Equivalence then pure (just (def (quote mk⇔) [] , 2))
+    else catchTC
+      (getDefinition nm >>= λ where
+        (record-type c _)      → (λ k → just (con c [] , k)) <$> visibleArity c
+        (data-type _ (c ∷ [])) → (λ k → just (con c [] , k)) <$> visibleArity c
+        _                      → pure nothing)
+      (pure nothing)
+
+  -- Introduction: a leaf with a canonical introduction form is proved by
+  -- applying it to fresh metas and solving the field obligations like any
+  -- instantiation — so `A ⇔ B` becomes the two engine goals `A → B` and
+  -- `B → A`, and a single-constructor record is built from its fields.
+  oracleIntroWith : List Term → List Oracle → Oracle
+  oracleIntroWith cands sub t@(def nm _) = introHead nm >>= λ where
+    nothing         → pure nothing
+    (just (hd , k)) → case applySpine hd (replicate k (vArg unknown)) of λ where
+      (just cand) → tryFill cands sub cand t
+      nothing     → pure nothing
+  oracleIntroWith _ _ _ = pure nothing
+
   -- The quantifier oracle stack unrolled to depth `fuel`: at each level the two
   -- oracles get the *next-shallower* stack for their sub-obligations, and at the
   -- bottom (`zero`) sub-obligations see only the default oracles + the engine
@@ -708,8 +786,10 @@ private
   -- so a lemma can be instantiated by a sub-solve too.
   qExtraAt : List Term → ℕ → List Oracle
   qExtraAt cands zero    = []
-  qExtraAt cands (suc f) = let sub = qExtraAt cands f
-                           in oracleInstWith cands sub ∷ oracleExistsWith cands sub ∷ []
+  qExtraAt cands (suc f) =
+    let sub = qExtraAt cands f
+    in oracleInstWith cands sub ∷ oracleExistsWith cands sub
+     ∷ oracleIntroWith cands sub ∷ []
 
 ------------------------------------------------------------------------
 -- X. The macros
