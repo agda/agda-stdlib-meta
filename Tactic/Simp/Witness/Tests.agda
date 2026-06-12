@@ -95,20 +95,24 @@ private
 
   ----------------------------------------------------------------
   -- key-example₃: length (map f l) ≡ length l  (multi-sorted,
-  -- same generic greedy)
+  -- with parametric polymorphism)
   --
-  -- Three sorts coexist: `list-A`, `list-B`, `nat`.  `map-f`
-  -- crosses from `list-A` to `list-B`; `length-A` and `length-B`
-  -- are distinct operations even though both produce `nat`.
+  -- A small "type-variable" alphabet `MTVar` indexes a *single*
+  -- polymorphic `list` sort.  The `length` operation is polymorphic
+  -- over `τ : MTVar`; `map-f` is the one operation that fixes a
+  -- specific source/target type pair.
   ----------------------------------------------------------------
 
+  data MTVar : Set where
+    α β : MTVar
+
   data MSort : Set where
-    list-A list-B nat : MSort
+    list : MTVar → MSort
+    nat  : MSort
 
   data MOp : List MSort → MSort → Set where
-    length-A : MOp (list-A ∷ []) nat
-    length-B : MOp (list-B ∷ []) nat
-    map-f    : MOp (list-A ∷ []) list-B
+    length : ∀ {τ} → MOp (list τ ∷ []) nat
+    map-f  :         MOp (list α ∷ []) (list β)
 
   M-sig : Signature
   M-sig = record { Sort = MSort ; Op = MOp }
@@ -146,19 +150,22 @@ private
 
     module _ {B : Set} (f : A → B) where
 
+      -- The type-variable environment: `α ↦ A`, `β ↦ B`.
+      interpTVar : MTVar → Set
+      interpTVar α = A
+      interpTVar β = B
+
       interpSort : MSort → Set
-      interpSort list-A = List A
-      interpSort list-B = List B
-      interpSort nat    = ℕ
+      interpSort (list τ) = List (interpTVar τ)
+      interpSort nat      = ℕ
 
       Env : Set
       Env = (s : MSort) → ℕ → interpSort s
 
       ⟦_⟧M : ∀ {s} → Expr M-sig s → Env → interpSort s
-      ⟦ var {s = s} x          ⟧M ρ = ρ s x
-      ⟦ apply length-A (e ◂ ε) ⟧M ρ = L.length (⟦ e ⟧M ρ)
-      ⟦ apply length-B (e ◂ ε) ⟧M ρ = L.length (⟦ e ⟧M ρ)
-      ⟦ apply map-f    (e ◂ ε) ⟧M ρ = L.map f (⟦ e ⟧M ρ)
+      ⟦ var {s = s} x        ⟧M ρ = ρ s x
+      ⟦ apply length (e ◂ ε) ⟧M ρ = L.length (⟦ e ⟧M ρ)
+      ⟦ apply map-f  (e ◂ ε) ⟧M ρ = L.map f (⟦ e ⟧M ρ)
 
       data MAtom : ℕ → ℕ → Set where
         length-map-atom
@@ -168,8 +175,8 @@ private
       interpretM (length-map-atom l) = length-map f l
 
       matchM : Matcher M-sig nat (⟦_⟧M {s = nat}) MAtom
-      matchM ρ (apply length-B (apply map-f (e ◂ ε) ◂ ε)) =
-        just (apply length-A (e ◂ ε) , rule (length-map-atom (⟦ e ⟧M ρ)))
+      matchM ρ (apply length (apply map-f (e ◂ ε) ◂ ε)) =
+        just (apply length (e ◂ ε) , rule (length-map-atom (⟦ e ⟧M ρ)))
       matchM _ _ = nothing
 
       M-setup : SimpSetup
@@ -183,9 +190,9 @@ private
                  → L.length (L.map f l) ≡ L.length l
     key-example₃ {l = l} {f = f} =
       proj₂ (runSimp (M-setup f) env 10
-                     (apply length-B (apply map-f (var 0 ◂ ε) ◂ ε)))
+                     (apply length (apply map-f (var 0 ◂ ε) ◂ ε)))
       where
         env : (s : MSort) → ℕ → interpSort f s
-        env list-A _ = l
-        env list-B _ = []
-        env nat    _ = 0
+        env (list α) _ = l
+        env (list β) _ = []
+        env nat      _ = 0
