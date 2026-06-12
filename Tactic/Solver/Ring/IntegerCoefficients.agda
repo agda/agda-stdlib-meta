@@ -15,7 +15,6 @@ module Tactic.Solver.Ring.IntegerCoefficients
 open import Algebra.Bundles using (RawRing)
 open import Algebra.Solver.Ring.AlmostCommutativeRing
   using (AlmostCommutativeRing; fromCommutativeRing ; _-Raw-AlmostCommutative⟶_)
-open import Data.Fin.Base using (Fin)
 open import Data.Integer.Base as ℤ using (ℤ; +_; -[1+_]; _⊖_; _◃_)
 open import Data.Integer.Properties as ℤP
   using ([1+m]⊖[1+n]≡m⊖n; +◃n≡+n; _≟_)
@@ -211,16 +210,14 @@ open import Algebra.Solver.Ring ℤ-rawRing R-acr morphism dec public
   hiding (⟦_⟧)
 
 ------------------------------------------------------------------------
--- Top-level aliases so the macro can reflect `con`, `var`, `:-_` by
--- name (they're constructors nested inside `Algebra.Solver.Ring`'s
--- four-parameter module otherwise). The `def`-shaped `_:+_`, `_:*_`,
--- `_:-_`, `_:=_` don't need aliases.
+-- Definition aliases for the *constructors* the macro emits:
+-- constructor re-exports are not re-parameterised the way definition
+-- re-exports are, so without these the macro could not supply `R`
+-- explicitly (see the `NatC` module in `Tactic.Solver.Ring`). The
+-- `def`-shaped `_:+_`, `_:*_`, `_:-_`, `_:=_` need no aliases.
 
 conP : ∀ {n} → ℤ → Polynomial n
 conP = con
-
-varP : ∀ {n} → Fin n → Polynomial n
-varP = var
 
 negP : ∀ {n} → Polynomial n → Polynomial n
 negP = :-_

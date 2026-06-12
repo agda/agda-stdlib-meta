@@ -54,6 +54,9 @@ module InlineRecordZ where
   comm+ : ∀ a b → (a + b) ≈ (b + a)
   comm+ = solve-≈ myZ''
 
+  one-mul : ∀ a → (a * (ℤ.+ 1)) ≈ a
+  one-mul a = solve-≈ myZ''
+
 ------------------------------------------------------------------------
 -- 3. η-expanded operators.
 
@@ -163,6 +166,9 @@ module RecordUpdateOfAliasZ where
   comm+ : ∀ a b → (a + b) ≈ (b + a)
   comm+ = solve-≈ myZUpdated
 
+  zero-add : ∀ a → ((ℤ.+ 0) + a) ≈ a
+  zero-add a = solve-≈ myZUpdated
+
 ------------------------------------------------------------------------
 -- 8. Record update with η-expanded field values.
 
@@ -180,6 +186,9 @@ module RecordUpdateηZ where
 
   comm+ : ∀ a b → (a + b) ≈ (b + a)
   comm+ = solve-≈ myZUpdatedη
+
+  one-mul : ∀ a → (a * (ℤ.+ 1)) ≈ a
+  one-mul a = solve-≈ myZUpdatedη
 
 ------------------------------------------------------------------------
 -- 9. Inlined operator body (KNOWN FAILURE). Instead of referring to

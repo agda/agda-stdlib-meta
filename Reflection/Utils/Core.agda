@@ -15,6 +15,7 @@ open import Reflection.AST.Literal using (nat)
 
 import Reflection.AST.Abstraction as Abs
 import Reflection.AST.Argument as Arg
+open import Reflection.Utils.Args using (vArgs)
 
 -- ** basics
 
@@ -31,11 +32,23 @@ insertName : Name → List Name → List Name
 insertName n []       = n ∷ []
 insertName n (m ∷ ms) = if n Name.≡ᵇ m then m ∷ ms else m ∷ insertName n ms
 
+-- Boolean equality on optional names. Deliberately *not*
+-- `Class.DecEq`'s `_==_`: this sits on solver hot paths
+-- and measured ~15% slower per macro call.
+_≡ᵐ_ : Maybe Name → Maybe Name → Bool
+just n  ≡ᵐ just m  = n Name.≡ᵇ m
+nothing ≡ᵐ nothing = true
+_       ≡ᵐ _       = false
+
+-- Peels leading λ-binders before reading the head Name.
+headName : Term → Maybe Name
+headName (def nm _)            = just nm
+headName (lam _ (abs _ body))  = headName body
+headName _                     = nothing
+
 -- Insert the def-name of `t` to `xs`, η-contract if required
 pickDefName : Term → List Name → List Name
-pickDefName (def n _)            xs = insertName n xs
-pickDefName (lam _ (abs _ body)) xs = pickDefName body xs
-pickDefName _                    xs = xs
+pickDefName t xs = Maybe.maybe′ (λ n → insertName n xs) xs (headName t)
 
 -- Extract a `ℕ` value from a term shaped as `lit (nat n)` or a chain
 -- of `suc`/`zero` constructors.
@@ -45,15 +58,23 @@ extractNat (quote ℕ.zero ◆)     = just 0
 extractNat (quote ℕ.suc ◆⟦ x ⟧) = Maybe.map ℕ.suc (extractNat x)
 extractNat _ = nothing
 
--- ** atom-table helpers (α-equality based)
+-- For wrapped numeric carriers like ℤ's `+_`: peel one
+-- `con C (n ∷ [])` layer.
+peelLitCon : Name → Term → Maybe ℕ
+peelLitCon C (con nm xs) = case nm Name.≡ᵇ C of λ where
+  false → nothing
+  true  → case vArgs xs of λ where
+    (a ∷ []) → extractNat a
+    _        → nothing
+peelLitCon _ _ = nothing
 
-insertAtom : Term → List Term → List Term
-insertAtom t []       = t ∷ []
-insertAtom t (a ∷ as) = if t =α= a then a ∷ as else a ∷ insertAtom t as
-
--- Look up `t`'s index in `xs` up to α-equality
-findAtomIndex : Term → List Term → Maybe ℕ
-findAtomIndex t xs = Maybe.map Fin.toℕ (findIndexᵇ (t =α=_) xs)
+-- `extractNat`, also accepting numerals under the given wrapper.
+extractCarrierNat : Maybe Name → Term → Maybe ℕ
+extractCarrierNat mC t = case extractNat t of λ where
+  (just n) → just n
+  nothing  → case mC of λ where
+    (just C) → peelLitCon C t
+    nothing  → nothing
 
 -- ** alternative view of function types as a pair of a list of arguments and a return type
 TypeView = List (Abs (Arg Type)) × Type
