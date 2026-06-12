@@ -295,3 +295,91 @@ close; polymorphic hypotheses rejected; conditional rules unsupported
 `λ x → suc x` match a rule about `suc`; instance binders, non-linear
 patterns, partial applications, `Set`-valued element types, and
 three-level goals all work unchanged.
+
+## Continuing improvements (2026-06-12, after the testing campaign)
+
+Supersedes "Next steps (post-roadmap)" above.  State: four macros, 57
+standalone tests + 56 in-module, six campaign fixes landed, ordered
+rewriting, candidate enrichment, mixed levels (simp! only), composed
+definitional fallback.  Ordering principle as before: the engine never
+trusts the meta level; prefer features that keep that invariant.
+
+### Tier 1 — Foundations under load
+
+1. **Table re-keying** (the known performance ceiling). Per-call cost is
+   super-linear in distinct operators via O(table) `=α=` scans in
+   `addOp`/`addSort`; ~20 rules ≈ 20 s/call, 50 rules OOM. Bucket both
+   tables by head `Name` (α-compare only within a bucket); atoms bucket
+   by their own head or a literal tag. Invasive to the de-Bruijn-
+   load-bearing reification path — now tractable with the 57-test suite
+   and the bench as safety nets. Re-run `Bench.agda` before/after.
+   This gates Lean-style large default rule sets and `simpD!`
+   dictionaries beyond toy size.
+2. **Fuel as an option.** The 100-step budget is hard-coded in three
+   places; chains needing more fail opaquely. Thread it through
+   `TCOptions.fuel` (the `("reduceDec/constrs" , 5)` pattern already
+   exists in `Tactic.Defaults`) with 100 as default.
+3. **Error rendering polish.** Stuck normal forms print de Bruijn
+   (`var 1`); resolve context names via `getContext` for display.
+   Small, pure DX.
+
+### Tier 2 — Coverage completion
+
+4. **Named-relation preservation (the `⊆` fix).** Function-valued
+   relations unfold under the goal whnf before `getRelSides` sees them.
+   Concrete low-risk fix: try `getRelSides` on the UNREDUCED goal type
+   first; reduce-and-recurse only when that fails. Likely makes
+   `⊆`-style goals work with their existing refl/trans lemmas.
+5. **`simpRelD!`** — mirror `simpD!`'s dictionary resolution for the
+   relation macro's two rule lists. Trivial.
+6. **Hypotheses for relation goals.** `simpRelH!` (or extend
+   `simpRel!`): ≡-hypotheses feed the engine like `simpH!`; a further
+   step is ~-valued hypotheses as chain steps in Option B.
+7. **Mixed levels for `simpRel!`** — currently a clean error; the
+   `simp!` Lift machinery extends (the subst-transport predicates need
+   the same lift/lower wrapping; goal-sort-lifted needs thought).
+8. **Monoid-`≈` / module-local relation bundles.** The remaining old-
+   simp scenario: module-parameter-valued sorts (`Carrier M`) plus a
+   relation at a different module-parameter level. Build on 7; compare
+   with old simpRel's `modVarFix` explicit-prefix emission as fallback.
+
+### Tier 3 — Power features
+
+9. **Conditional rules, staged** (per the Phase-3 analysis): first a
+   proof-free `Subst → Bool` gate (reuses the `perm` plumbing; safe by
+   construction) for ground-literal decidable side conditions; then the
+   symbolic fragment via an Env-threaded `csound` field plus one new
+   Core substitution lemma. The second half is the only genuinely
+   research-shaped item left.
+10. **Goals beyond ≡ and registered relations**: boolean goals (`T b`,
+    `b ≡ true` via `decide`-style closure) — the original TODO at the
+    top of old `Tactic.Simp`.
+11. **Rewriting under binders** (Lean does this via funext +
+    congruence). Needs binder-aware expressions in the engine — a
+    second-generation core. Research; collect motivating goals from
+    real usage first.
+
+### Tier 4 — Productization
+
+12. **`simp?`** — report which rules actually fired (engine returns
+    used-rule indices alongside the proof; macro prints the minimal
+    call). Cheap in this architecture since the chain is data.
+13. **Verified relation chains**: replace `simpRel!`'s meta-level
+    trans-chaining with the object-level `Witness.Chain` algebra; then
+    retire the unused half of `Tactic.Simp.Witness`.
+14. **Migration end-game** (maintainer decisions): deprecate the lossy
+    `Tactic.Simp`, settle naming, keep `Bench.agda` out of any default
+    check path, consider upstreaming.
+
+### Suggested order
+
+1 → 4 → 5 → 2 → 6 → 9(first half) → 7 → 8 → 3 → 12 → 10 → 9(second
+half) → 13 → 11 → 14.
+
+Rationale: re-keying first while the test suite is fresh — every later
+feature benefits from headroom, and it unblocks realistic dictionary
+sizes; then the cheap coverage items (4, 5) that need no design; the
+conditional-rule gate and relation-hypotheses next because they reuse
+existing plumbing; the level/monoid pair after that as one block of
+Lift-machinery work; research items (9's symbolic half, 11) last,
+gated on demand from real usage.
