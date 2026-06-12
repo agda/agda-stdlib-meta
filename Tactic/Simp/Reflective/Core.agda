@@ -33,8 +33,9 @@ module Tactic.Simp.Reflective.Core where
 open import Level using (Level; Lift; lift) renaming (suc to ℓsuc)
 open import Data.Empty   using (⊥-elim)
 open import Data.List    using (List; []; _∷_)
+open import Data.Bool    using (Bool; true; false)
 open import Data.Maybe   using (Maybe; just; nothing)
-open import Data.Nat     using (ℕ; zero; suc)
+open import Data.Nat     using (ℕ; zero; suc; _<ᵇ_; _+_)
 open import Data.Nat.Properties using (_≟_)
 open import Data.Product using (Σ; _×_; _,_; proj₁; proj₂)
 open import Data.Unit    using (⊤; tt)
@@ -86,6 +87,54 @@ mutual
   ...   | nothing   = nothing
   eqExprs? []      (_ ∷ _) = nothing
   eqExprs? (_ ∷ _) []      = nothing
+
+----------------------------------------------------------------
+-- A boolean strict total order on expressions, used ONLY as a
+-- heuristic gate for permutative rules: a permutative rule fires only
+-- when it strictly decreases this order.  No properties are proved —
+-- it merely restricts *when* a rule applies, so soundness is untouched.
+-- Lexicographic: `var` < `op`; then numerically on the head indices;
+-- then on the argument list (lexicographic, mutual List version).
+----------------------------------------------------------------
+
+-- Node count.  Used as the primary key of `ltExpr` so that a compound
+-- subterm is always "larger" than a leaf: this stops a permutative
+-- commutativity rule from ever pulling a compound to the front of a
+-- right-associated spine (which would create a left-nest the gate then
+-- locks in), the key to AC-style convergence.
+mutual
+  sizeExpr : Expr → ℕ
+  sizeExpr (var _ _)  = 1
+  sizeExpr (op _ _ es) = suc (sizeExprs es)
+
+  sizeExprs : List Expr → ℕ
+  sizeExprs []       = 0
+  sizeExprs (e ∷ es) = sizeExpr e + sizeExprs es
+
+mutual
+  -- Lexicographic on (size, kind, head index, args).  Size first keeps
+  -- leaves below compounds; then `var` < `op`; then numerically on the
+  -- head; then on the argument list.
+  ltExpr : Expr → Expr → Bool
+  ltExpr a b with sizeExpr a ≟ sizeExpr b
+  ... | no _  = sizeExpr a <ᵇ sizeExpr b
+  ... | yes _ = ltExpr′ a b
+
+  ltExpr′ : Expr → Expr → Bool
+  ltExpr′ (var i _)    (var j _)    = i <ᵇ j
+  ltExpr′ (var _ _)    (op _ _ _)   = true
+  ltExpr′ (op _ _ _)   (var _ _)    = false
+  ltExpr′ (op o _ es)  (op o′ _ es′) with o ≟ o′
+  ... | yes _ = ltExprs es es′
+  ... | no _  = o <ᵇ o′
+
+  ltExprs : List Expr → List Expr → Bool
+  ltExprs []       []       = false
+  ltExprs []       (_ ∷ _)  = true
+  ltExprs (_ ∷ _)  []       = false
+  ltExprs (a ∷ as) (b ∷ bs) with eqExpr? a b
+  ... | just _  = ltExprs as bs
+  ... | nothing = ltExpr a b
 
 ----------------------------------------------------------------
 -- Substitutions and first-order matching.  Both are sort-guarded:
@@ -303,6 +352,11 @@ module Eval {ℓ} (Ts : List (Pointed ℓ)) (ops : List (WithSorts.Op Ts)) where
       lhs rhs : Expr
       sEq     : sortOf rhs ≡ sortOf lhs
       sound   : ∀ τ → evalAt (sortOf lhs) τ lhs ≡ evalAt (sortOf lhs) τ rhs
+      -- Permutative gate (heuristic, no proof obligation): when `true`,
+      -- the rule fires only if its instantiated rhs is strictly smaller
+      -- than the matched term in `ltExpr`.  This makes commutativity-
+      -- style rules terminate by orienting them towards a canonical form.
+      perm    : Bool
 
   Rules : Set ℓ
   Rules = List Rule
@@ -324,17 +378,28 @@ module Eval {ℓ} (Ts : List (Pointed ℓ)) (ops : List (WithSorts.Op Ts)) where
   Step : Expr → Set ℓ
   Step e = Σ Expr (λ e′ → EStep e e′)
 
+  -- The verified step produced by a successful match (proof unchanged
+  -- regardless of the permutative gate; only *whether* we return it
+  -- depends on `perm`).
+  mkStep : (r : Rule) (σ : Subst) (e : Expr)
+         → applyS σ (Rule.lhs r) ≡ e → Step e
+  mkStep r σ e eq =
+    applyS σ (Rule.rhs r)
+    , λ s ρ → trans (cong (evalAt s ρ) (sym eq))
+              (trans (subst-eval s ρ σ (Rule.lhs r))
+              (trans (soundAt r s (substVar ρ σ))
+              (sym (subst-eval s ρ σ (Rule.rhs r)))))
+
   tryRule : Rule → (e : Expr) → Maybe (Step e)
   tryRule r e with match (Rule.lhs r) e []
   ... | nothing = nothing
   ... | just σ with eqExpr? (applyS σ (Rule.lhs r)) e
   ...   | nothing = nothing
-  ...   | just eq =
-          just ( applyS σ (Rule.rhs r)
-               , λ s ρ → trans (cong (evalAt s ρ) (sym eq))
-                         (trans (subst-eval s ρ σ (Rule.lhs r))
-                         (trans (soundAt r s (substVar ρ σ))
-                         (sym (subst-eval s ρ σ (Rule.rhs r))))))
+  ...   | just eq with Rule.perm r
+  ...     | false = just (mkStep r σ e eq)
+  ...     | true  with ltExpr (applyS σ (Rule.rhs r)) e
+  ...       | true  = just (mkStep r σ e eq)
+  ...       | false = nothing
 
   tryRules : Rules → (e : Expr) → Maybe (Step e)
   tryRules []       e = nothing

@@ -449,6 +449,127 @@ private
       (just vs) → addUnique vs rest
       nothing   → rest
 
+  ----------------------------------------------------------------
+  -- Instantiation enrichment (item 10).  Polymorphic-rule
+  -- instantiation (`findAssignments`) only scans goal subterms, so a
+  -- candidate that appears solely in another rule's instantiated rhs is
+  -- invisible.  Before processing, we grow the candidate pool: for each
+  -- rule we load its GENERIC lhs/rhs at the Term level (all telescope
+  -- binders as wildcards), match the lhs against each existing
+  -- candidate, and on a FULL binding (every variable used in the rhs is
+  -- bound) substitute into the rhs to obtain a new closed goal-context
+  -- term, adding its `subApps`.  Iterated to a fixpoint with hard caps.
+  -- Enlarging the pool is SAFE: a wrong candidate just never fires.
+  ----------------------------------------------------------------
+
+  -- Append extra args to a head term (no de Bruijn shift here).
+  applyTerm : Term → Args Term → Term
+  applyTerm (var k as) extra = var k (as ++ extra)
+  applyTerm (def f as) extra = def f (as ++ extra)
+  applyTerm (con c as) extra = con c (as ++ extra)
+  applyTerm t          _     = t
+
+  -- Substitute meta-level bindings (rule-index → goal Term) into a rule
+  -- body term: rule-binder vars (j < d) get replaced by their binding;
+  -- goal-context vars (j ≥ d) are strengthened by d.  Used by Option B
+  -- and the enrichment pass.
+  mutual
+    substRuleVars : ℕ → List (ℕ × Term) → Term → Term
+    substRuleVars d σ (var j as) =
+      if j <ᵇ d
+        then (case lookupB σ j of λ where
+          (just t) → applyTerm t (substRuleArgs d σ as)
+          nothing  → var j (substRuleArgs d σ as))    -- (shouldn't happen if fully matched)
+        else var (j ∸ d) (substRuleArgs d σ as)
+    substRuleVars d σ (def f as) = def f (substRuleArgs d σ as)
+    substRuleVars d σ (con c as) = con c (substRuleArgs d σ as)
+    substRuleVars d σ t          = t
+
+    substRuleArgs : ℕ → List (ℕ × Term) → Args Term → Args Term
+    substRuleArgs d σ []             = []
+    substRuleArgs d σ (arg i t ∷ as) = arg i (substRuleVars d σ t) ∷ substRuleArgs d σ as
+
+  -- The free rule-binder variables (index < d) mentioned in a term.
+  mutual
+    fvb : ℕ → ℕ → Term → List ℕ
+    fvb d k (var x as) =
+      let here = if (k ≤ᵇ x) ∧ (x <ᵇ k + d) then (x ∸ k) ∷ [] else []
+      in here ++ fvbArgs d k as
+    fvb d k (def _ as)            = fvbArgs d k as
+    fvb d k (con _ as)            = fvbArgs d k as
+    fvb d k (lam _ (abs _ t))     = fvb d (suc k) t
+    fvb d k (pi (arg _ a) (abs _ b)) = fvb d k a ++ fvb d (suc k) b
+    fvb d k _                     = []
+
+    fvbArgs : ℕ → ℕ → Args Term → List ℕ
+    fvbArgs d k []             = []
+    fvbArgs d k (arg _ t ∷ as) = fvb d k t ++ fvbArgs d k as
+
+  -- Every variable in `needed` is bound by σ.
+  coversAll : List ℕ → List (ℕ × Term) → Bool
+  coversAll []       σ = true
+  coversAll (i ∷ is) σ = is-just (lookupB σ i) ∧ coversAll is σ
+
+  -- α-dedup append of a single candidate term into a pool.
+  addUniqueT : Term → List Term → List Term
+  addUniqueT t []       = t ∷ []
+  addUniqueT t (u ∷ us) = if t =α= u then u ∷ us else u ∷ addUniqueT t us
+
+  -- One enrichment rule: telescope length + generic lhs/rhs (Term).
+  data EnrichRule : Set where
+    mkEnrichRule : (d : ℕ) (lhs rhs : Term) → EnrichRule
+
+  loadEnrichRule : Name → TC EnrichRule
+  loadEnrichRule n = do
+    ty ← getType n
+    (body , tel) ← stripAndReduce 100 ty
+    case body of λ where
+      (def (quote _≡_) (hArg _ ∷ hArg _ ∷ vArg lhs ∷ vArg rhs ∷ [])) →
+        return (mkEnrichRule (length tel) lhs rhs)
+      _ → return (mkEnrichRule 0 unknown unknown)   -- not an equation: inert
+
+  -- Match one rule's lhs against one candidate; on a full binding emit
+  -- the instantiated rhs (a closed goal-context term).
+  enrichAt : EnrichRule → Term → Maybe Term
+  enrichAt (mkEnrichRule d lhs rhs) cand =
+    case matchT d lhs cand [] of λ where
+      (just σ) → if coversAll (fvb d 0 rhs) σ
+                   then just (substRuleVars d σ rhs)
+                   else nothing
+      nothing  → nothing
+
+  -- One round: for every (rule, candidate) pair, add the subApps of any
+  -- instantiated rhs to the pool (deduped).  Caps the pool size.
+  enrichRound : ℕ → List EnrichRule → List Term → List Term → List Term
+  enrichRound cap rs []         pool = pool
+  enrichRound cap rs (c ∷ cs)   pool =
+    let pool′ = goRules rs pool
+    in enrichRound cap rs cs pool′
+    where
+      addAll : List Term → List Term → List Term
+      addAll []       p = p
+      addAll (t ∷ ts) p = if cap ≤ᵇ length p then p else addAll ts (addUniqueT t p)
+      goRules : List EnrichRule → List Term → List Term
+      goRules []       p = p
+      goRules (r ∷ rs) p = case enrichAt r c of λ where
+        (just inst) → goRules rs (addAll (subApps inst) p)
+        nothing     → goRules rs p
+
+  -- Fixpoint over ≤ `rounds` iterations or until the pool stops growing.
+  enrich : ℕ → ℕ → List EnrichRule → List Term → List Term
+  enrich 0          cap rs pool = pool
+  enrich (suc more) cap rs pool =
+    let pool′ = enrichRound cap rs pool pool
+    in if length pool′ ≤ᵇ length pool
+         then pool′
+         else enrich more cap rs pool′
+
+  -- Build the enrichment rules for a name list and enrich a pool.
+  enrichCandidates : List Name → List Term → TC (List Term)
+  enrichCandidates names pool = do
+    rs ← traverse loadEnrichRule names
+    return (enrich 3 100 rs pool)
+
   extendCtxTel : {A : Set} → List (ArgInfo × Term) → TC A → TC A
   extendCtxTel []             m = m
   extendCtxTel ((i , t) ∷ tel) m =
@@ -474,13 +595,6 @@ private
     hName : Name → Head
     hTerm : Term → Head
 
-  -- Append extra args to a head term (no de Bruijn shift here).
-  applyTerm : Term → Args Term → Term
-  applyTerm (var k as) extra = var k (as ++ extra)
-  applyTerm (def f as) extra = def f (as ++ extra)
-  applyTerm (con c as) extra = con c (as ++ extra)
-  applyTerm t          _     = t
-
   applyHead : Head → Args Term → Term
   applyHead (hName n) extra = def n extra
   applyHead (hTerm t) extra = applyTerm (mapVars suc t) extra
@@ -491,6 +605,65 @@ private
   -- under the λ).  A hypothesis head carries no `pre` (`[]`) and is
   -- itself shifted under the λ by `applyHead`.  Typechecks by
   -- computation of `evalAt`.
+  ----------------------------------------------------------------
+  -- Permutativity auto-detection.  A rule is *permutative* iff its lhs
+  -- and rhs Exprs are equal up to a BIJECTIVE renaming of pattern
+  -- variables: same tree shape, same op indices and sorts, with a
+  -- var-to-var correspondence that is consistent in BOTH directions.
+  -- `+-comm` (x + y ≡ y + x) and left-commutativity qualify;
+  -- associativity (different tree shape) does not.  Threading two
+  -- binding maps (lhs-var → rhs-var and back) over the structure.
+  ----------------------------------------------------------------
+
+  lookupℕ : List (ℕ × ℕ) → ℕ → Maybe ℕ
+  lookupℕ []            _ = nothing
+  lookupℕ ((a , b) ∷ m) i = if Data.Nat._≡ᵇ_ i a then just b else lookupℕ m i
+
+  -- m : lhs-var → rhs-var ; m⁻ : rhs-var → lhs-var.  Extend both maps
+  -- consistently or fail (already-bound to a different partner ⇒ fail).
+  bindVar : ℕ → ℕ → List (ℕ × ℕ) → List (ℕ × ℕ)
+          → Maybe (List (ℕ × ℕ) × List (ℕ × ℕ))
+  bindVar i j m m⁻ with lookupℕ m i | lookupℕ m⁻ j
+  ... | just j′ | just i′ = if Data.Nat._≡ᵇ_ j j′ ∧ Data.Nat._≡ᵇ_ i i′
+                              then just (m , m⁻) else nothing
+  ... | nothing | nothing = just ((i , j) ∷ m , (j , i) ∷ m⁻)
+  ... | _       | _       = nothing   -- one bound, one free ⇒ not bijective
+
+  mutual
+    permMatch : RC.Expr → RC.Expr → List (ℕ × ℕ) → List (ℕ × ℕ)
+              → Maybe (List (ℕ × ℕ) × List (ℕ × ℕ))
+    permMatch (RC.Expr.var i s) (RC.Expr.var j s′) m m⁻ =
+      if Data.Nat._≡ᵇ_ s s′ then bindVar i j m m⁻ else nothing
+    permMatch (RC.Expr.op o s es) (RC.Expr.op o′ s′ es′) m m⁻ =
+      if (Data.Nat._≡ᵇ_ o o′) ∧ (Data.Nat._≡ᵇ_ s s′)
+        then permMatchs es es′ m m⁻ else nothing
+    permMatch _ _ _ _ = nothing
+
+    permMatchs : List RC.Expr → List RC.Expr → List (ℕ × ℕ) → List (ℕ × ℕ)
+               → Maybe (List (ℕ × ℕ) × List (ℕ × ℕ))
+    permMatchs []       []       m m⁻ = just (m , m⁻)
+    permMatchs (a ∷ as) (b ∷ bs) m m⁻ = case permMatch a b m m⁻ of λ where
+      (just (m′ , m⁻′)) → permMatchs as bs m′ m⁻′
+      nothing           → nothing
+    permMatchs _ _ _ _ = nothing
+
+  allId : List (ℕ × ℕ) → Bool
+  allId []            = true
+  allId ((a , b) ∷ r) = Data.Nat._≡ᵇ_ a b ∧ allId r
+
+  -- True iff lhs and rhs match up to a bijective variable renaming AND
+  -- the rule is genuinely permutative (the renaming is not the identity;
+  -- otherwise an ordinary already-oriented rule would be wrongly gated).
+  isPerm : RC.Expr → RC.Expr → Bool
+  isPerm lhs rhs = case permMatch lhs rhs [] [] of λ where
+    (just (m , _)) → not (allId m)
+    nothing        → false
+
+  -- The quoted Bool used for the `perm` field of an emitted `mkRule`.
+  permFlag : Bool → Term
+  permFlag true  = con (quote Data.Bool.true)  []
+  permFlag false = con (quote Data.Bool.false) []
+
   mkSoundTerm : Head → Args Term → List (ArgInfo × ℕ) → Term
   mkSoundTerm hd pre is =
     let d = length is
@@ -515,7 +688,8 @@ private
     rhsT ← quoteNorm rhsE
     return ( con (quote RC.Eval.mkRule)
                ( vArg lhsT ∷ vArg rhsT ∷ vArg (con (quote refl) [])
-               ∷ vArg (mkSoundTerm hd pre (zip (map proj₁ tel) bs)) ∷ [] )
+               ∷ vArg (mkSoundTerm hd pre (zip (map proj₁ tel) bs))
+               ∷ vArg (permFlag (isPerm lhsE rhsE)) ∷ [] )
            , st₂ )
 
   -- Specialise the rule at one parameter assignment: apply the lemma
@@ -913,25 +1087,6 @@ private
     else (if not changedR then subst' predL (sym' p1) core
                           else subst' predL (sym' p1) (subst' predR (sym' p2) core))
 
-  -- Substitute meta-level bindings (rule-index → goal Term) into a rule
-  -- body term: rule-binder vars (j < d) get replaced by their binding;
-  -- goal-context vars (j ≥ d) are strengthened by d.  Used by Option B.
-  mutual
-    substRuleVars : ℕ → List (ℕ × Term) → Term → Term
-    substRuleVars d σ (var j as) =
-      if j <ᵇ d
-        then (case lookupB σ j of λ where
-          (just t) → applyTerm t (substRuleArgs d σ as)
-          nothing  → var j (substRuleArgs d σ as))    -- (shouldn't happen if fully matched)
-        else var (j ∸ d) (substRuleArgs d σ as)
-    substRuleVars d σ (def f as) = def f (substRuleArgs d σ as)
-    substRuleVars d σ (con c as) = con c (substRuleArgs d σ as)
-    substRuleVars d σ t          = t
-
-    substRuleArgs : ℕ → List (ℕ × Term) → Args Term → Args Term
-    substRuleArgs d σ []             = []
-    substRuleArgs d σ (arg i t ∷ as) = arg i (substRuleVars d σ t) ∷ substRuleArgs d σ as
-
   -- Read bindings for all d binders, outermost-first, into args with the
   -- given ArgInfos.  Binder k ↦ rule index d∸1∸k.
   collectAllArgs : ℕ → List ArgInfo → List (ℕ × Term) → Maybe (Args Term)
@@ -1006,7 +1161,8 @@ private
         -- entered (their indices are relative to the call site, which
         -- excludes the stripped ∀-binders).
         let hyps′ = map (mapVars (_+ depth)) hyps
-        (ruleTs , st₀) ← processRules (subApps lhs ++ subApps rhs) names (mkSt [] [])
+        cands ← enrichCandidates names (subApps lhs ++ subApps rhs)
+        (ruleTs , st₀) ← processRules cands names (mkSt [] [])
         (hypTs  , st₀′) ← processHyps st₀ hyps′
         let allRuleTs = ruleTs ++ hypTs
         (lhsE , st₁) ← conv 0 [] st₀′ lhs
@@ -1098,7 +1254,8 @@ private
         (just (relN , prefix , lhs , rhs)) ← return (getRelSides ty)
           where nothing → error1 "simpRel!: goal is not a binary relation"
         -- (a) Build the engine tables + ≡-rules over BOTH sides.
-        (ruleTs , st₁) ← processRules (subApps lhs ++ subApps rhs) eqNames (mkSt [] [])
+        cands ← enrichCandidates eqNames (subApps lhs ++ subApps rhs)
+        (ruleTs , st₁) ← processRules cands eqNames (mkSt [] [])
         (lhsE , st₂) ← conv 0 [] st₁ lhs
         (rhsE , st₃) ← conv 0 [] st₂ rhs
         -- Mixed universe levels are not supported for relation goals
@@ -1434,3 +1591,56 @@ private
   -- Mixed levels with a ℕ-side rule combined in the same goal.
   tlvl₃ : ∀ {a} {A : Set a} (xs : List A) → length (xs ++ []) + 0 ≡ length xs
   tlvl₃ = simp! (quote ++-identityʳ ∷ quote +-identityʳ ∷ [])
+
+  -- *** Task 3 (item 9): ordered rewriting for permutative rules
+
+  open import Data.Nat.Properties using (+-comm; +-assoc)
+
+  -- +-comm alone: without the permutative gate this ping-pongs until
+  -- fuel exhausts.  The gate orients it towards a single canonical form,
+  -- and both sides share the operation table so they converge there.
+  torder₁ : ∀ {x y : ℕ} → x + y ≡ y + x
+  torder₁ = simp! (quote +-comm ∷ [])
+
+  -- A left-commutativity wrapper is permutative (x + (y + z) ≡ y + (x + z),
+  -- same tree shape, bijective var renaming) — the classic AC-completion
+  -- partner of assoc + comm.
+  +-lcomm : ∀ x y z → x + (y + z) ≡ y + (x + z)
+  +-lcomm x y z =
+    trans (sym (+-assoc x y z)) (trans (cong (_+ z) (+-comm x y)) (+-assoc y x z))
+
+  -- AC normalisation with the assoc/comm/lcomm trio.  `ltExpr`'s
+  -- size-first key keeps comm from breaking the right-spine, so assoc
+  -- (right-association) + comm/lcomm (sorting) converge to one canonical
+  -- form on both sides regardless of the input association.
+  torder₂ : ∀ {a b c : ℕ} → (c + b) + a ≡ a + (b + c)
+  torder₂ = simp! (quote +-assoc ∷ quote +-comm ∷ quote +-lcomm ∷ [])
+
+  -- Four atoms, fully left-nested on the left, fully right-nested on the
+  -- right — the AC trio normalises both to the same canonical sum.
+  torder₄ : ∀ {a b c d : ℕ} → ((d + c) + b) + a ≡ a + (b + (c + d))
+  torder₄ = simp! (quote +-assoc ∷ quote +-comm ∷ quote +-lcomm ∷ [])
+
+  -- *** Task 2 (item 10): instantiation candidates beyond the goal
+
+  -- `++-identityʳ`'s `{A := ℕ}` instantiation needs the candidate
+  -- `dup n ++ []`, which appears NOWHERE in the goal — only in `f-eq`'s
+  -- instantiated rhs.  Without enrichment this fails with
+  -- "could not instantiate polymorphic rule"; the enrichment pass adds
+  -- `f-eq`'s rhs subterms to the candidate pool, exposing it.
+  dup : ℕ → List ℕ
+  dup n = n ∷ n ∷ []
+
+  f : ℕ → List ℕ
+  f n = dup n ++ []
+
+  f-eq : ∀ n → f n ≡ dup n ++ []
+  f-eq n = refl
+
+  tenrich₁ : ∀ n → f n ≡ dup n
+  tenrich₁ = simp! (quote f-eq ∷ quote ++-identityʳ ∷ [])
+
+  -- Non-regression: +-assoc alone is NOT permutative (different tree
+  -- shape) and must keep behaving as an ordinary rule (cf. t₁₃).
+  torder₃ : ∀ {a b c d : ℕ} → ((a + b) + c) + d ≡ a + (b + (c + d))
+  torder₃ = simp! (quote +-assoc ∷ [])
