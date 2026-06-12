@@ -86,6 +86,13 @@ record Simp (D : Set) : Set where
   constructor mkSimp
   field ruleName : Name
 
+-- Carries the goal relation's transitivity and reflexivity witnesses
+-- for `simpRel!` (declared fresh; no dependency on the lossy
+-- `Tactic.Simp`, which has its own `RelInfo`).
+record RelInfo : Set where
+  constructor mkRelInfo
+  field relTrans relRefl : Name
+
 private
 
   ----------------------------------------------------------------
@@ -620,6 +627,56 @@ private
     error1 "simpH!: hypothesis argument is not a list literal"
 
   ----------------------------------------------------------------
+  -- Mixed universe levels (item 8).  The engine is level-uniform per
+  -- goal (`Pointed ℓ`), so when a goal mixes sorts at different levels
+  -- (e.g. `List A : Set a` and `ℕ : Set₀`) we `Lift` every lower sort
+  -- to the join `ℓmax` and wrap that sort's op positions with
+  -- `lift`/`lower`.  Definitional collapse survives because
+  -- `lower (lift x)` reduces, so `evalAt` still reduces to the goal.
+  ----------------------------------------------------------------
+
+  -- The level term of a sort type `ty` (a goal-context Term).  `Set₀`
+  -- normalises to `agda-sort (lit 0)`; `Set a` to `agda-sort (set a)`.
+  levelOf : Term → TC Term
+  levelOf ty = do
+    s ← inferType ty >>= normalise
+    case s of λ where
+      (sort (set l)) → return l
+      (sort (lit n)) → return (levelLit n)
+      _              → return (def (quote zeroˡ) [])
+    where
+      -- `lit n` means Setₙ, whose level is `suc^n zero`.
+      levelLit : ℕ → Term
+      levelLit zero    = def (quote zeroˡ) []
+      levelLit (suc n) = def (quote sucˡ) (vArg (levelLit n) ∷ [])
+
+  -- α-dedup a list of level terms.
+  dedupα : List Term → List Term
+  dedupα []       = []
+  dedupα (t ∷ ts) = go t (dedupα ts)
+    where
+      go : Term → List Term → List Term
+      go x []       = x ∷ []
+      go x (y ∷ ys) = if x =α= y then y ∷ ys else y ∷ go x ys
+
+  -- ℓ₁ ⊔ ℓ₂ ⊔ … (right fold) over a non-empty distinct level list.
+  quoteLevelMax : List Term → Term
+  quoteLevelMax []       = def (quote zeroˡ) []
+  quoteLevelMax (l ∷ []) = l
+  quoteLevelMax (l ∷ ls) =
+    def (quote _⊔ˡ_) (vArg l ∷ vArg (quoteLevelMax ls) ∷ [])
+
+  -- `Lift ℓmax T`, witness `lift w`, value `lower v`, result `lift v`.
+  liftTy : Term → Term → Term
+  liftTy ℓmax T = def (quote Lift) (vArg ℓmax ∷ vArg T ∷ [])
+
+  liftTm : Term → Term
+  liftTm w = con (quote lift) (vArg w ∷ [])
+
+  lowerTm : Term → Term
+  lowerTm v = def (quote lower) (vArg v ∷ [])
+
+  ----------------------------------------------------------------
   -- Emission.
   ----------------------------------------------------------------
 
@@ -632,12 +689,154 @@ private
     error1 ("simp!: no witness available for sort" <+> show ty
             <+> "(a rule mentions a type that never occurs in the goal)")
 
+  -- Indexed (sort i, isLifted flag) — does sort index s need lifting?
+  liftedAt : List Bool → ℕ → Bool
+  liftedAt []       _       = false
+  liftedAt (b ∷ _)  zero    = b
+  liftedAt (_ ∷ bs) (suc i) = liftedAt bs i
+
+  -- Build the `List (Pointed ℓmax)` with lifted lower sorts.
+  quoteSortsLifted : Term → List Bool → List (Term × Maybe Term) → TC Term
+  quoteSortsLifted _    _        [] = return (con (quote List.[]) [])
+  quoteSortsLifted ℓmax (b ∷ bs) ((ty , just w) ∷ rest) = do
+    r ← quoteSortsLifted ℓmax bs rest
+    let ty′ = if b then liftTy ℓmax ty else ty
+        w′  = if b then liftTm w        else w
+    return (con (quote List._∷_) (vArg (quotePair ty′ w′) ∷ vArg r ∷ []))
+  quoteSortsLifted _ _ ((ty , nothing) ∷ _) =
+    error1 ("simp!: no witness available for sort" <+> show ty
+            <+> "(a rule mentions a type that never occurs in the goal)")
+  quoteSortsLifted _ [] (_ ∷ _) =
+    error1 "simp!: internal error: level table shorter than sort table"
+
+  -- Membership test on a list of de Bruijn indices.
+  memℕ : ℕ → List ℕ → Bool
+  memℕ x []       = false
+  memℕ x (y ∷ ys) = Data.Nat._≡ᵇ_ x y ∨ memℕ x ys
+
+  -- Replace every value reference `var v []` (with v ∈ `vs`, adjusted for
+  -- binder depth) by `lower (var v [])`.  Used to insert `lower` at the
+  -- uses of lifted-sort argument variables inside an op implementation.
+  mutual
+    lowerVars : List ℕ → Term → Term
+    lowerVars vs (var v []) =
+      if memℕ v vs then lowerTm (var v []) else var v []
+    lowerVars vs (var v as)  = var v (lowerVarsArgs vs as)
+    lowerVars vs (def f as)  = def f (lowerVarsArgs vs as)
+    lowerVars vs (con c as)  = con c (lowerVarsArgs vs as)
+    lowerVars vs (lam vis (abs x b)) = lam vis (abs x (lowerVars (map suc vs) b))
+    lowerVars vs t           = t
+
+    lowerVarsArgs : List ℕ → Args Term → Args Term
+    lowerVarsArgs vs []             = []
+    lowerVarsArgs vs (arg i t ∷ as) = arg i (lowerVars vs t) ∷ lowerVarsArgs vs as
+
+  -- Wrap an op implementation `λ x₁ … xₙ → body` (the shape `mkImpl`
+  -- guarantees) so arguments of a lifted sort are `lower`ed at their use
+  -- sites and a lifted-result body is `lift`ed.  Argument k (sort as[k])
+  -- is referenced as `var (n∸1∸k)` directly under the n lambdas.
+  wrapImpl : List Bool → List ℕ → ℕ → Term → Term
+  wrapImpl flags as r impl = peel n impl
+    where
+      n : ℕ
+      n = length as
+      -- the de Bruijn indices (under the n lambdas) of lifted args
+      liftedVars : List ℕ
+      liftedVars = go 0 as
+        where
+          go : ℕ → List ℕ → List ℕ
+          go _ []        = []
+          go k (s ∷ ss)  =
+            if liftedAt flags s then (n ∸ 1 ∸ k) ∷ go (suc k) ss
+                                else go (suc k) ss
+      peel : ℕ → Term → Term
+      peel zero    body =
+        let body′ = lowerVars liftedVars body
+        in if liftedAt flags r then liftTm body′ else body′
+      peel (suc m) (lam vis (abs x b)) = lam vis (abs x (peel m b))
+      peel (suc m) t                   = t   -- shouldn't happen
+
   quoteOps : List (Term × List ℕ × ℕ) → Term
   quoteOps ops = quoteList (map
     (λ p → quotePair
              (quotePair (quoteList (map `ℕ (proj₁ (proj₂ p))))
                         (`ℕ (proj₂ (proj₂ p))))
              (proj₁ p))
+    ops)
+
+  -- Rule soundness witnesses are `λ τ → lemma … (τ s i) …`; a lifted
+  -- sort makes `τ s i : Lift ℓmax T`, but the lemma expects `T`, so wrap
+  -- those applications with `lower`.  Traverse the sound lambda tracking
+  -- τ's de Bruijn depth `d`; rewrite `var d (lit s ∷ lit i ∷ [])` whose
+  -- sort s is lifted into `lower (var d …)`.
+  mutual
+    wrapSound : List Bool → ℕ → Term → Term
+    wrapSound flags d t@(var k (arg _ (lit (nat s)) ∷ arg _ (lit (nat i)) ∷ [])) =
+      if (Data.Nat._≡ᵇ_ k d) ∧ liftedAt flags s
+        then lowerTm t
+        else t
+    wrapSound flags d (var k as)           = var k (wrapSoundArgs flags d as)
+    wrapSound flags d (def f as)           = def f (wrapSoundArgs flags d as)
+    wrapSound flags d (con c as)           = con c (wrapSoundArgs flags d as)
+    wrapSound flags d (lam v (abs x b))    = lam v (abs x (wrapSound flags (suc d) b))
+    wrapSound flags d t                    = t
+
+    wrapSoundArgs : List Bool → ℕ → Args Term → Args Term
+    wrapSoundArgs flags d []             = []
+    wrapSoundArgs flags d (arg i t ∷ as) = arg i (wrapSound flags d t) ∷ wrapSoundArgs flags d as
+
+  -- Read the sort index off a quoted `RC.Expr` term (`op o s …` / `var i s`).
+  exprSortOf : Term → Maybe ℕ
+  exprSortOf (con c (_ ∷ arg _ (lit (nat s)) ∷ _)) =
+    if (c == quote RC.Expr.op) ∨ (c == quote RC.Expr.var) then just s else nothing
+  exprSortOf _ = nothing
+
+  -- `λ τ → e`  ↦  `λ τ → cong lift e`
+  congLiftLam : Term → Term
+  congLiftLam (lam v (abs x e)) =
+    lam v (abs x (def (quote cong) (vArg (con (quote lift) []) ∷ vArg e ∷ [])))
+  congLiftLam e = e
+
+  -- Rewrite the soundness lambda of a quoted `mkRule` term (it is the
+  -- last visible arg; the lhs Expr is the first visible `con`-Expr arg,
+  -- whose sort decides the `cong lift` on the result).  Robust to any
+  -- leading (reconstructed) module-parameter args.
+  wrapRule : List Bool → Term → Term
+  wrapRule flags (con c as) = con c (go true as)
+    where
+      -- whether the rule sort is lifted (read from the first Expr arg)
+      ruleLifted : Bool
+      ruleLifted = goFind as
+        where
+          goFind : Args Term → Bool
+          goFind []             = false
+          goFind (arg _ t ∷ rest) = case exprSortOf t of λ where
+            (just s) → liftedAt flags s
+            nothing  → goFind rest
+      -- rewrite each visible λ-arg (the sound lambda); `fstExpr` guards
+      -- so only the trailing lambda is treated as the witness.
+      go : Bool → Args Term → Args Term
+      go _ []                                = []
+      go first (arg i@(arg-info visible _) t ∷ rest) =
+        case t of λ where
+          (lam v (abs x b)) →
+            -- inside the body of `λ τ`, τ is `var 0`; start matching at d=0
+            let lowered = lam v (abs x (wrapSound flags 0 b))
+                body    = if ruleLifted then congLiftLam lowered else lowered
+            in arg i body ∷ go false rest
+          _ → arg i t ∷ go false rest
+      go first (a ∷ rest) = a ∷ go first rest
+  wrapRule _ t = t
+
+  -- Like `quoteOps`, but `lift`/`lower`-wraps each impl per `flags`
+  -- (sort index → isLifted).
+  quoteOpsLifted : List Bool → List (Term × List ℕ × ℕ) → Term
+  quoteOpsLifted flags ops = quoteList (map
+    (λ p → let as = proj₁ (proj₂ p)
+               r  = proj₂ (proj₂ p)
+           in quotePair
+                (quotePair (quoteList (map `ℕ as)) (`ℕ r))
+                (wrapImpl flags as r (proj₁ p)))
     ops)
 
   ----------------------------------------------------------------
@@ -662,6 +861,135 @@ private
     t ← normalise valApp
     return (show t)
 
+  ----------------------------------------------------------------
+  -- Relation goals (`simpRel!`).
+  ----------------------------------------------------------------
+
+  -- (relN, prefix-args, lhs, rhs): the last two VISIBLE args of a
+  -- def-headed relation goal are lhs/rhs, the rest is the prefix.
+  getRelSides : Term → Maybe (Name × Args Term × Term × Term)
+  getRelSides (def relN args) =
+    case reverse args of λ where
+      (arg (arg-info visible _) rhs ∷ arg (arg-info visible _) lhs ∷ rest) →
+        just (relN , reverse rest , lhs , rhs)
+      _ → nothing
+  getRelSides _ = nothing
+
+  -- Build the meta-level `normalForm` application for an Expr term and
+  -- normalise it (plain Expr data — bounded).  Returns the normalised
+  -- Expr-as-Term, the engine's normal form for `eE`.  Same module-
+  -- argument spelling as solveApp (Ts, ops first).
+  computeNF : Term → Term → Term → Term → TC Term
+  computeNF TsT opsT rulesT eE =
+    normalise (def (quote RC.Eval.normalForm)
+                  ( vArg TsT ∷ vArg opsT
+                  ∷ vArg (`ℕ 100) ∷ vArg rulesT ∷ vArg eE ∷ [] ))
+
+  -- p_i : evalAt g ρ₀ e ≡ evalAt g ρ₀ (normalForm 100 rs e), whose type
+  -- reduces (definitional collapse) to the actual goal-side term ≡ nf.
+  mkSimplifyEq : Term → Term → ℕ → Term → Term → Term
+  mkSimplifyEq TsT opsT g rulesT eE =
+    def (quote RC.Eval.simplifyEq)
+      ( vArg TsT ∷ vArg opsT
+      ∷ vArg (`ℕ g) ∷ vArg (`ℕ 100) ∷ vArg rulesT ∷ vArg eE ∷ [] )
+
+  -- subst-based relation proof (mirrors old buildRelProof).  prefix/rhs
+  -- are goal-context terms; shift them under the predicate λ.  `changedL`
+  -- / `changedR` say whether each side actually simplified (skip the
+  -- subst if not).  core : lhsNF ~ rhsNF (a goal-context term).
+  buildRelProof : Name → Args Term → Term → Term → Term → Term → Term
+                → Bool → Bool → Term
+  buildRelProof relN prefix p1 p2 core lhsNFt rhs changedL changedR =
+    let prefixS = map-Args (mapVars suc) prefix
+        predL   = lam visible (abs "◆"
+                    (def relN (prefixS ++ vArg (var 0 []) ∷ vArg (mapVars suc rhs) ∷ [])))
+        predR   = lam visible (abs "◆"
+                    (def relN (prefixS ++ vArg (mapVars suc lhsNFt) ∷ vArg (var 0 []) ∷ [])))
+        sym' p  = def (quote sym) (vArg p ∷ [])
+        subst' P eq t = def (quote subst) (vArg P ∷ vArg eq ∷ vArg t ∷ [])
+    in
+    if not changedL
+    then (if not changedR then core else subst' predR (sym' p2) core)
+    else (if not changedR then subst' predL (sym' p1) core
+                          else subst' predL (sym' p1) (subst' predR (sym' p2) core))
+
+  -- Substitute meta-level bindings (rule-index → goal Term) into a rule
+  -- body term: rule-binder vars (j < d) get replaced by their binding;
+  -- goal-context vars (j ≥ d) are strengthened by d.  Used by Option B.
+  mutual
+    substRuleVars : ℕ → List (ℕ × Term) → Term → Term
+    substRuleVars d σ (var j as) =
+      if j <ᵇ d
+        then (case lookupB σ j of λ where
+          (just t) → applyTerm t (substRuleArgs d σ as)
+          nothing  → var j (substRuleArgs d σ as))    -- (shouldn't happen if fully matched)
+        else var (j ∸ d) (substRuleArgs d σ as)
+    substRuleVars d σ (def f as) = def f (substRuleArgs d σ as)
+    substRuleVars d σ (con c as) = con c (substRuleArgs d σ as)
+    substRuleVars d σ t          = t
+
+    substRuleArgs : ℕ → List (ℕ × Term) → Args Term → Args Term
+    substRuleArgs d σ []             = []
+    substRuleArgs d σ (arg i t ∷ as) = arg i (substRuleVars d σ t) ∷ substRuleArgs d σ as
+
+  -- Read bindings for all d binders, outermost-first, into args with the
+  -- given ArgInfos.  Binder k ↦ rule index d∸1∸k.
+  collectAllArgs : ℕ → List ArgInfo → List (ℕ × Term) → Maybe (Args Term)
+  collectAllArgs d infos σ = go 0 infos
+    where
+      go : ℕ → List ArgInfo → Maybe (Args Term)
+      go k []         = just []
+      go k (i ∷ is) = case lookupB σ (d ∸ 1 ∸ k) of λ where
+        (just t) → (case go (suc k) is of λ where
+          (just as) → just (arg i t ∷ as)
+          nothing   → nothing)
+        nothing  → nothing
+
+  -- One ~-rule, all telescope binders treated as wildcards.  Returns
+  -- (instantiated-proof : cur ~ rhsInst , rhsInst) on a full match.
+  data RelRule : Set where
+    mkRelRule : (relN : Name) (ruleN : Name) (d : ℕ)
+              → (infos : List ArgInfo) (lhsB rhsB : Term) → RelRule
+
+  -- getType + stripAndReduce + parse a ~-rule into a RelRule.
+  loadRelRule : Name → TC RelRule
+  loadRelRule n = do
+    ty ← getType n
+    (body , tel) ← stripAndReduce 100 ty
+    (just (relN , _ , lhsB , rhsB)) ← return (getRelSides body)
+      where nothing → error1 ("simpRel!: ~-rule is not a binary relation: " <+> show n)
+    return (mkRelRule relN n (length tel) (map proj₁ tel) lhsB rhsB)
+
+  -- Try each ~-rule at the root of `cur`; on the first match return the
+  -- instantiated rhs term and the proof `def ruleN args : cur ~ rhsInst`.
+  tryRelStep : List RelRule → Term → Maybe (Term × Term)
+  tryRelStep []                                       cur = nothing
+  tryRelStep (mkRelRule relN ruleN d infos lhsB rhsB ∷ rs) cur =
+    case matchT d lhsB cur [] of λ where
+      (just σ) → case collectAllArgs d infos σ of λ where
+        (just args) → just (substRuleVars d σ rhsB , def ruleN args)
+        nothing     → tryRelStep rs cur
+      nothing  → tryRelStep rs cur
+
+  -- Compute each sort's level term, then decide: if all sorts share one
+  -- level → `nothing` (fast path).  Otherwise `just (ℓmax , flags)` where
+  -- `flags i` says sort i must be `Lift`ed to the join `ℓmax`.
+  buildLiftFlags : List (Term × Maybe Term) → TC (Maybe (Term × List Bool))
+  buildLiftFlags sorts = do
+    levels ← traverse (λ p → levelOf (proj₁ p)) sorts
+    let distinct = dedupα levels
+    case distinct of λ where
+      []       → return nothing
+      (_ ∷ []) → return nothing
+      _        → do
+        -- Normalise the join: `0 ⊔ a` collapses to `a`, so a sort whose
+        -- level already equals ℓmax is NOT lifted (avoids lifting the
+        -- top-level sort to a syntactically-different-but-equal level).
+        ℓmax ← normalise (quoteLevelMax distinct)
+        levels′ ← traverse normalise levels
+        let flags = map (λ l → not (l =α= ℓmax)) levels′
+        return (just (ℓmax , flags))
+
   simpRGoal : ℕ → ℕ → List Name → List Term → ITactic
   simpRGoal 0          _     _     _    = error1 "simp!: goal has too many binders"
   simpRGoal (suc fuel) depth names hyps = do
@@ -685,14 +1013,32 @@ private
         (rhsE , st₂) ← conv 0 [] st₁ rhs
         lT  ← quoteNorm lhsE
         rT  ← quoteNorm rhsE
-        TsT ← quoteSorts (St.sorts st₂)
-        let opsT     = quoteOps (St.ops st₂)
-            rulesT   = quoteList allRuleTs
-            g        = RC.sortOf lhsE
+        -- Mixed-level handling: build the (possibly Lift-ed) sort table
+        -- and matching impls.  `gLifted` says whether the goal sort g was
+        -- lifted (then the engine proves `lift lhs ≡ lift rhs` and we
+        -- close the real goal with `cong lower`).
+        liftInfo ← buildLiftFlags (St.sorts st₂)
+        let g = RC.sortOf lhsE
+        TsT ← case liftInfo of λ where
+          nothing               → quoteSorts (St.sorts st₂)
+          (just (ℓmax , flags)) → quoteSortsLifted ℓmax flags (St.sorts st₂)
+        let opsT = case liftInfo of λ where
+              nothing               → quoteOps (St.ops st₂)
+              (just (_ , flags))    → quoteOpsLifted flags (St.ops st₂)
+            gLifted = case liftInfo of λ where
+              nothing            → false
+              (just (_ , flags)) → liftedAt flags g
+            rulesT   = case liftInfo of λ where
+              nothing            → quoteList allRuleTs
+              (just (_ , flags)) → quoteList (map (wrapRule flags) allRuleTs)
             solveApp = def (quote RC.Eval.solveAt)
               ( vArg TsT ∷ vArg opsT
               ∷ vArg (`ℕ g) ∷ vArg (`ℕ 100)
               ∷ vArg rulesT ∷ vArg lT ∷ vArg rT ∷ [] )
+            mkProof : Term → Term
+            mkProof p = if gLifted
+                        then def (quote cong) (vArg (def (quote lower) []) ∷ vArg p ∷ [])
+                        else p
         -- Pre-run the solver to WHNF at the meta level for a decent
         -- error (via is-just, so the proof term is never normalised).
         nf ← normalise (def (quote Data.Maybe.is-just) (vArg solveApp ∷ []))
@@ -703,9 +1049,94 @@ private
               rNF ← showStuck TsT opsT g rulesT rT
               error1 ("simp!: simplification failed to close the goal;\n  the two sides reached the normal forms\n    "
                       <+> lNF <+> "\n  and\n    " <+> rNF))
-            else unifyWithGoal (def (quote RC.from-just!) (vArg solveApp ∷ []))
-          _ → unifyWithGoal (def (quote RC.from-just!) (vArg solveApp ∷ []))
+            else unifyWithGoal (mkProof (def (quote RC.from-just!) (vArg solveApp ∷ [])))
+          _ → unifyWithGoal (mkProof (def (quote RC.from-just!) (vArg solveApp ∷ [])))
       _ → error1 "simp!: goal is not a propositional equality"
+
+  ----------------------------------------------------------------
+  -- The relation tactic: recurse under binders, then (a) ≡-normalise
+  -- both sides with the verified engine and (b) chain top-level
+  -- ~-rules, closing with the relation's reflexivity.
+  ----------------------------------------------------------------
+
+  -- Option B: chain ~-rules from `cur` towards `target` (both already
+  -- ≡-normalised goal-context Terms).  Returns the trans-chain proof
+  -- `cur ~ final` and `final` (= `target` on success).  Minimal-args
+  -- emission: relTrans/relRefl applied with no prefix/endpoints, letting
+  -- final goal-unification solve the implicits.  After each ~-step the
+  -- new current term is `normalise`d (the rule's rhs is unreduced — e.g.
+  -- `1 + n` — but `target` is the engine's normal form, so they must be
+  -- brought to a common form before the α-equality test).
+  relChain : RelInfo → List RelRule → ℕ → Term → Term → TC (Maybe (Term × Term))
+  relChain ri rrs n cur target =
+    if cur =α= target
+      then return (just (def (RelInfo.relRefl ri) [] , cur))
+      else (case n of λ where
+        0       → return nothing
+        (suc m) → case tryRelStep rrs cur of λ where
+          (just (next , step)) → do
+            next′ ← normalise next
+            r ← relChain ri rrs m next′ target
+            case r of λ where
+              (just (rest , final)) →
+                return (just (def (RelInfo.relTrans ri) (vArg step ∷ vArg rest ∷ []) , final))
+              nothing → return nothing
+          nothing → return nothing)
+
+  simpRelGoal : ℕ → ℕ → RelInfo → List Name → List Name → ITactic
+  simpRelGoal 0          _     _  _       _        = error1 "simpRel!: goal has too many binders"
+  simpRelGoal (suc fuel) depth ri eqNames relNames = do
+    hole ← goalHole
+    ty   ← inferType hole >>= reduce
+    case ty of λ where
+      (pi argTy@(arg (arg-info v _) _) (abs x bodyTy)) → do
+        hole′ ← extendContext (x , argTy) (newMeta bodyTy)
+        unifyStrict (hole , ty) (lam v (abs x hole′))
+        extendContext (x , argTy)
+          (runWithHole hole′ (simpRelGoal fuel (suc depth) ri eqNames relNames))
+      _ → do
+        (just (relN , prefix , lhs , rhs)) ← return (getRelSides ty)
+          where nothing → error1 "simpRel!: goal is not a binary relation"
+        -- (a) Build the engine tables + ≡-rules over BOTH sides.
+        (ruleTs , st₁) ← processRules (subApps lhs ++ subApps rhs) eqNames (mkSt [] [])
+        (lhsE , st₂) ← conv 0 [] st₁ lhs
+        (rhsE , st₃) ← conv 0 [] st₂ rhs
+        -- Mixed universe levels are not supported for relation goals
+        -- (the `Lift`/`cong lower` interaction with the subst predicates
+        -- is unimplemented); fail cleanly rather than emit a bad term.
+        (nothing) ← buildLiftFlags (St.sorts st₃)
+          where (just _) → error1 "simpRel!: mixed universe levels are unsupported for relation goals (use monomorphic carrier types)"
+        let rulesT = quoteList ruleTs
+            g      = RC.sortOf lhsE
+        lT  ← quoteNorm lhsE
+        rT  ← quoteNorm rhsE
+        TsT ← quoteSorts (St.sorts st₃)
+        let opsT = quoteOps (St.ops st₃)
+        -- Meta-level normal forms (Expr data — bounded normalise).
+        lNFt ← computeNF TsT opsT rulesT lT
+        rNFt ← computeNF TsT opsT rulesT rT
+        -- The actual goal-context normal-form Terms (definitional
+        -- collapse: evalAt g ρ₀ nf reduces to the goal side's nf).
+        lhsNFterm ← normalise (def (quote RC.Eval.evalAt)
+                      ( vArg TsT ∷ vArg opsT ∷ vArg (`ℕ g)
+                      ∷ vArg (def (quote RC.Eval.ρ₀) (vArg TsT ∷ vArg opsT ∷ []))
+                      ∷ vArg lNFt ∷ [] ))
+        rhsNFterm ← normalise (def (quote RC.Eval.evalAt)
+                      ( vArg TsT ∷ vArg opsT ∷ vArg (`ℕ g)
+                      ∷ vArg (def (quote RC.Eval.ρ₀) (vArg TsT ∷ vArg opsT ∷ []))
+                      ∷ vArg rNFt ∷ [] ))
+        let changedL = not (lT =α= lNFt)
+            changedR = not (rT =α= rNFt)
+            p1 = mkSimplifyEq TsT opsT g rulesT lT
+            p2 = mkSimplifyEq TsT opsT g rulesT rT
+        -- (b) Chain ~-rules from lhsNFterm towards rhsNFterm.
+        relRules ← traverse loadRelRule relNames
+        (just (core , _)) ← relChain ri relRules 100 lhsNFterm rhsNFterm
+          where nothing → error1
+                  ("simpRel!: could not connect the normal forms;\n  lhs-nf = "
+                   <+> show lhsNFterm <+> "\n  rhs-nf = " <+> show rhsNFterm)
+        unifyWithGoal
+          (buildRelProof relN prefix p1 p2 core lhsNFterm rhs changedL changedR)
 
 simpRTactic : List Name → ITactic
 simpRTactic names =
@@ -719,6 +1150,12 @@ simpRTactic names =
 simpHTactic : List Name → List Term → ITactic
 simpHTactic names hyps =
   local (λ env → record env { reconstruction = true }) (simpRGoal 100 0 names hyps)
+
+-- Relation goals: ≡-rules, ~-rules, the relation's trans/refl.
+simpRelTactic : List Name → List Name → RelInfo → ITactic
+simpRelTactic eqNames relNames ri =
+  local (λ env → record env { reconstruction = true })
+        (simpRelGoal 100 0 ri eqNames relNames)
 
 macro
   simp! : List Name → Tactic
@@ -740,6 +1177,15 @@ macro
   simpH! names hypsExpr = initTacOpts (do
     hyps ← unquoteHypList 100 hypsExpr
     simpHTactic names hyps) defaultTCOptions
+
+  -- Prove `lhs ~ rhs` for a binary relation `~` by (a) ≡-normalising
+  -- both sides with the verified engine and transporting along ~ with
+  -- subst, then (b) chaining top-level ~-rules with the relation's
+  -- transitivity, closing with reflexivity.  Args: ≡-rules, ~-rules,
+  -- and the relation's trans/refl info.
+  simpRel! : List Name → List Name → RelInfo → Tactic
+  simpRel! eqNames relNames ri =
+    initTacOpts (simpRelTactic eqNames relNames ri) defaultTCOptions
 
 -- ** Tests
 
@@ -904,3 +1350,87 @@ private
   -- bound, so h's de Bruijn index must be shifted by the depth entered.
   th₄ : (h : ∀ (n : ℕ) → n + 0 ≡ n) → ∀ (m : ℕ) → m + 0 ≡ m
   th₄ h = simpH! [] (h ∷ [])
+
+  -- *** Task 1: relation goals (simpRel!)
+
+  -- **** Option C: ≡-normalisation, closed by relRefl (no ~-rules) ****
+
+  -- LHS only: n + 0 → n, then ≤-refl closes n ≤ n
+  testRel₁ : ∀ {n : ℕ} → n + 0 ≤ n
+  testRel₁ = simpRel! (quote +-identityʳ ∷ []) []
+                      (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+
+  -- RHS only normalises (exercises the predR/sym-subst path)
+  testRel₂ : ∀ {n : ℕ} → n ≤ n + 0
+  testRel₂ = simpRel! (quote +-identityʳ ∷ []) []
+                      (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+
+  -- Both sides + two rules
+  testRel₃ : ∀ {n m : ℕ} → (n + 0) + (0 + m) ≤ n + m
+  testRel₃ = simpRel! (quote +-identityˡ ∷ quote +-identityʳ ∷ []) []
+                      (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+
+  -- Under an explicit ∀ binder
+  testRel₄ : ∀ (n : ℕ) → n + 0 ≤ n
+  testRel₄ = simpRel! (quote +-identityʳ ∷ []) []
+                      (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+
+  -- Mixed binders
+  testRel₅ : ∀ (m : ℕ) {n : ℕ} → (m + 0) + (0 + n) ≤ m + n
+  testRel₅ = simpRel! (quote +-identityˡ ∷ quote +-identityʳ ∷ []) []
+                      (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+
+  -- Deep subterm normalisation
+  testRel₆ : ∀ {a b c : ℕ} → (a + 0) + ((b + 0) + c) ≤ a + (b + c)
+  testRel₆ = simpRel! (quote +-identityʳ ∷ []) []
+                      (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+
+  -- **** Option B: top-level ~-rule chaining (n≤1+n) ****
+
+  -- n≤1+n : ∀ n → n ≤ 1 + n  (from Data.Nat.Properties)
+
+  -- ≡-normalise LHS (n + 0 → n), then one ~-step n ≤ 1 + n
+  testRelB₁ : ∀ {n : ℕ} → n + 0 ≤ 1 + n
+  testRelB₁ = simpRel! (quote +-identityʳ ∷ [])
+                       (quote n≤1+n ∷ [])
+                       (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+
+  -- Two chained ~-steps: n ≤ 1 + n ≤ 2 + n
+  testRelB₃ : ∀ {n : ℕ} → n + 0 ≤ 2 + n
+  testRelB₃ = simpRel! (quote +-identityʳ ∷ [])
+                       (quote n≤1+n ∷ [])
+                       (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+
+  -- **** List permutation: simpRel! over _↭_ ****
+
+  open import Data.List.Relation.Binary.Permutation.Propositional
+    using (_↭_; ↭-refl; ↭-trans)
+  import Data.List.Relation.Binary.Permutation.Propositional.Properties as ↭Prop
+
+  -- Option C for ↭: ≡-normalise (xs ++ []) → xs in the LHS, ↭-refl closes.
+  -- The new engine handles the raw polymorphic ++-identityʳ directly.
+  testBag₁ : ∀ (xs ys : List ℕ) → (xs ++ []) ++ ys ↭ xs ++ ys
+  testBag₁ = simpRel! (quote ++-identityʳ ∷ []) []
+                      (mkRelInfo (quote ↭-trans) (quote ↭-refl))
+
+  -- Option B for ↭: no ≡-rules, a single ++-comm ~-step.  Option B's
+  -- match-all-binders instantiates the polymorphic ++-comm uniformly.
+  testBag₄ : ∀ (xs ys : List ℕ) → xs ++ ys ↭ ys ++ xs
+  testBag₄ = simpRel! [] (quote ↭Prop.++-comm ∷ [])
+                      (mkRelInfo (quote ↭-trans) (quote ↭-refl))
+
+  -- *** Task 2: mixed universe levels
+
+  -- Same-level but generic: a single sort at level a (already worked
+  -- before Task 2; confirms the fast path is unaffected).
+  tlvl₁ : ∀ {a} {A : Set a} (xs ys : List A) → (xs ++ []) ++ ys ≡ xs ++ ys
+  tlvl₁ = simp! (quote ++-identityʳ ∷ [])
+
+  -- Mixed levels: `List A : Set a` and `ℕ : Set₀`.  The ℕ sort is lifted
+  -- to `a`; the goal sort (ℕ) is lifted, so the proof is `cong lower …`.
+  tlvl₂ : ∀ {a} {A : Set a} (xs : List A) → length (xs ++ []) ≡ length xs
+  tlvl₂ = simp! (quote ++-identityʳ ∷ [])
+
+  -- Mixed levels with a ℕ-side rule combined in the same goal.
+  tlvl₃ : ∀ {a} {A : Set a} (xs : List A) → length (xs ++ []) + 0 ≡ length xs
+  tlvl₃ = simp! (quote ++-identityʳ ∷ quote +-identityʳ ∷ [])

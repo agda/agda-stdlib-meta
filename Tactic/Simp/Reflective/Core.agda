@@ -404,6 +404,14 @@ module Eval {ℓ} (Ts : List (Pointed ℓ)) (ops : List (WithSorts.Op Ts)) where
   normalForm : ℕ → Rules → Expr → Expr
   normalForm n rs e = proj₁ (simplify n rs e)
 
+  -- The verified ≡-step transporting one side of a relation goal to its
+  -- engine normal form, at the goal sort, in the defaults environment.
+  -- Used by `simpRel!`: the type `evalAt g ρ₀ e ≡ evalAt g ρ₀ (normalForm n rs e)`
+  -- reduces (by definitional collapse) to `goalSide ≡ goalSideNF`.
+  simplifyEq : (g : ℕ) (n : ℕ) (rs : Rules) (e : Expr)
+             → evalAt g ρ₀ e ≡ evalAt g ρ₀ (normalForm n rs e)
+  simplifyEq g n rs e = proj₂ (simplify n rs e) g ρ₀
+
 ----------------------------------------------------------------
 -- Maybe extraction that forces the solver at type-checking time.
 ----------------------------------------------------------------
