@@ -208,3 +208,45 @@ Headline: every ℕ/list/≤/↭ rewriting scenario is covered (and two old
 remaining gaps are module-local relation bundles (monoid `≈`), conditional
 rules, the rhs-non-normalised ~-target case (`testRelB₂/₄/₆`), and a
 convenience `simpRelD!`. The old module and its tests are left untouched.
+
+## Next steps (post-roadmap, 2026-06-12)
+
+All four phases of the original roadmap are done (commits 5273694, 2f4638d,
+f1e92f7, b78fd0f). What remains, in recommended order:
+
+1. **Table re-keying (performance).** The Phase-4 benchmark shows per-call
+   cost is dominated by meta-level rule reprocessing, super-linear in the
+   number of *distinct operators* via the O(table) `=α=` dedup scans in
+   `addOp`/`addSort` (~20-rule soft ceiling, 50 rules OOM). The fix is to
+   key both tables by something cheaper than α-comparison of full terms —
+   e.g. bucket by head `Name` first and α-compare only within a bucket.
+   Invasive to the de-Bruijn-load-bearing reification path; do it with the
+   test suite as a safety net and re-run the bench before/after. This is
+   the gating item for Lean-style large default rule sets.
+2. **Conditional rules, ground-literal fragment.** Per the Phase-3 design
+   analysis: a proof-free `Subst → Bool` gate on rules (reusing the `perm`
+   plumbing verbatim — safe by construction since gates only restrict
+   firing), with the macro synthesizing the gate from decidable predicates
+   over literal-valued matched arguments. The symbolic generalization
+   (Env-threaded `csound` + a new Core substitution lemma) is the research
+   follow-up.
+3. **Monoid-`≈` / module-local relation bundles.** Two sub-problems:
+   module-parameter-valued sorts (`Carrier M`) and relation goals whose
+   carrier and relation live at different module-parameter levels (needs
+   the mixed-level Lift machinery extended to `simpRel!`, or the old
+   `modVarFix`-style explicit-prefix emission).
+4. **`simpRelD!`** — trivial: mirror `simpD!`'s `getDictNames` for the
+   relation macro's two rule lists.
+5. **Eta-matching for function atoms.** `length-map`'s specialized pattern
+   variable matches the atom `suc` but not `λ x → suc x` (different atom
+   keys). Normalising atom keys to eta-short form in `conv` would close
+   this.
+6. **Verified relation chains.** Replace `simpRel!`'s meta-level
+   trans-chaining with the object-level `Witness.Chain` algebra, making
+   Option B verified-by-construction like the ≡ engine; then retire the
+   unused half of `Tactic.Simp.Witness`.
+7. **Retirement decisions (maintainer).** Whether/when to deprecate the
+   lossy `Tactic.Simp` and whether the reflective implementation takes
+   over the `Tactic.Simp` name; whether the Bench module stays in-repo
+   (it needs `+RTS -M11g` and ~164 s, so it should not join any default
+   check path).
