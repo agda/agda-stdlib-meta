@@ -2,10 +2,10 @@
 
 module Tactic.Solver.Ring.Tests.Equations where
 
-open import Algebra using (CommutativeSemiring)
+open import Algebra using (CommutativeRing; CommutativeSemiring)
 open import Relation.Binary using (Setoid)
 open import Relation.Binary.PropositionalEquality using (_≡_)
-open import Tactic.Solver.Ring using (solve-≈ ; module Solver)
+open import Tactic.Solver.Ring using (solve-≈)
 
 ------------------------------------------------------------------------
 -- Limitations
@@ -598,3 +598,82 @@ module StressTest {c ℓ} (R : CommutativeSemiring c ℓ) where
        ((((c * e) + (c * f)) + ((c * g) + (c * h))) +
         (((d * e) + (d * f)) + ((d * g) + (d * h)))))
   expand8-≈ a b c d e f g h = solve-≈ R
+
+------------------------------------------------------------------------
+-- ℚ: the carrier whose literals (`0ℚ`, `1ℚ`, `½`, …) unfold into
+-- proof-carrying `mkℚ` terms and must never be unfolded by the macro.
+
+module ℚDerived where
+  open import Data.Rational using (ℚ; 0ℚ; 1ℚ; ½; _+_; _*_)
+  import Data.Rational.Properties as ℚP
+
+  ℚ-CSR : CommutativeSemiring _ _
+  ℚ-CSR = CommutativeRing.commutativeSemiring ℚP.+-*-commutativeRing
+
+  -- Bundle literals must be recognised as `1#`/`0#`.
+  one-mulʳ : ∀ q → q * 1ℚ ≡ q
+  one-mulʳ q = solve-≈ ℚ-CSR
+
+  one-mulˡ : ∀ q → 1ℚ * q ≡ q
+  one-mulˡ q = solve-≈ ℚ-CSR
+
+  zero-addˡ : ∀ q → 0ℚ + q ≡ q
+  zero-addˡ q = solve-≈ ℚ-CSR
+
+  lit-only : 1ℚ * 1ℚ ≡ 1ℚ
+  lit-only = solve-≈ ℚ-CSR
+
+  -- Non-bundle literals (`½`) are atoms; they must keep their
+  -- spelling (not be unfolded to `mkℚ …`) on both sides.
+  half-comm : ∀ q → q * ½ ≡ ½ * q
+  half-comm q = solve-≈ ℚ-CSR
+
+  half-distrib : ∀ q r → ½ * (q + r) ≡ ½ * q + ½ * r
+  half-distrib q r = solve-≈ ℚ-CSR
+
+  -- Bundle literal and non-bundle literal together.
+  half-one : ∀ q → (q * ½) * 1ℚ ≡ ½ * q
+  half-one q = solve-≈ ℚ-CSR
+
+  -- Same goals through the directly-defined ring, as a control.
+  module DirectControl where
+    one-mulʳ′ : ∀ q → q * 1ℚ ≡ q
+    one-mulʳ′ q = solve-≈ ℚP.+-*-commutativeRing
+
+    half-comm′ : ∀ q → q * ½ ≡ ½ * q
+    half-comm′ q = solve-≈ ℚP.+-*-commutativeRing
+
+------------------------------------------------------------------------
+-- ℤ: wrapped numeric literals (`+ n`) through a derived bundle.
+
+module ℤDerived where
+  open import Data.Integer using (ℤ; +_; _+_; _*_)
+  import Data.Integer.Properties as ℤP
+
+  ℤ-CSR : CommutativeSemiring _ _
+  ℤ-CSR = CommutativeRing.commutativeSemiring ℤP.+-*-commutativeRing
+
+  lit-two : (+ 2) ≡ (+ 1) + (+ 1)
+  lit-two = solve-≈ ℤ-CSR
+
+  one-mulʳ : ∀ a → a * (+ 1) ≡ a
+  one-mulʳ a = solve-≈ ℤ-CSR
+
+  lit-coeff : ∀ a → (+ 2) * a ≡ a + a
+  lit-coeff a = solve-≈ ℤ-CSR
+
+------------------------------------------------------------------------
+-- A second def-layer on top of the accessor.
+
+module DoubleAlias where
+  open import Data.Rational using (ℚ; 1ℚ; _+_; _*_)
+  import Data.Rational.Properties as ℚP
+
+  ℚ-CSR₁ : CommutativeSemiring _ _
+  ℚ-CSR₁ = CommutativeRing.commutativeSemiring ℚP.+-*-commutativeRing
+
+  ℚ-CSR₂ : CommutativeSemiring _ _
+  ℚ-CSR₂ = ℚ-CSR₁
+
+  one-mulʳ : ∀ q → q * 1ℚ ≡ q
+  one-mulʳ q = solve-≈ ℚ-CSR₂

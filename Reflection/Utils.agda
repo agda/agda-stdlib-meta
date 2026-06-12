@@ -6,3 +6,6 @@ open import Reflection.Utils.Records public
 open import Reflection.Utils.Args public
 open import Reflection.Utils.Metas public
 open import Reflection.Utils.Substitute public
+open import Reflection.Utils.Reduction public
+open import Reflection.Utils.AtomStore public
+open import Reflection.Utils.Goal public
