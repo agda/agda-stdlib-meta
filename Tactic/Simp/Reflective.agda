@@ -166,6 +166,32 @@ private
   strengthenBy : ℕ → Term → Term
   strengthenBy d = mapVars (_∸ d)
 
+  -- Canonicalize ℕ numerals: `zero`/`suc (lit n)` constructor spellings
+  -- and literals denote the same values but are distinct reflected
+  -- terms, which would give distinct atom keys (a rule stated with `0`
+  -- would not match a goal written with `zero`).  Normalise every term
+  -- entering the reifier to the literal spelling.
+  mutual
+    canonNums : Term → Term
+    canonNums (con c as) = canonCon c (canonNumsArgs as)
+    canonNums (def f as) = def f (canonNumsArgs as)
+    canonNums (var x as) = var x (canonNumsArgs as)
+    canonNums (lam v (abs s t)) = lam v (abs s (canonNums t))
+    canonNums (pi (arg i a) (abs s b)) =
+      pi (arg i (canonNums a)) (abs s (canonNums b))
+    canonNums t = t
+
+    canonNumsArgs : Args Term → Args Term
+    canonNumsArgs []             = []
+    canonNumsArgs (arg i t ∷ as) = arg i (canonNums t) ∷ canonNumsArgs as
+
+    canonCon : Name → Args Term → Term
+    canonCon c [] =
+      if c == quote ℕ.zero then lit (nat 0) else con c []
+    canonCon c as@(arg _ (lit (nat n)) ∷ []) =
+      if c == quote ℕ.suc then lit (nat (suc n)) else con c as
+    canonCon c as = con c as
+
   -- Does t mention the free variable with (depth-adjusted) index i?
   mutual
     mvT : ℕ → ℕ → Term → Bool
@@ -376,8 +402,8 @@ private
     case ty′ of λ where
       (pi a@(arg i dom) (abs x b)) → do
         (body , tel) ← extendContext (x , a) (stripAndReduce fuel b)
-        return (body , (i , dom) ∷ tel)
-      _ → return (ty′ , [])
+        return (body , (i , canonNums dom) ∷ tel)
+      _ → return (canonNums ty′ , [])
 
   -- Pure first-order matching of a rule lhs (over d binders) against
   -- a goal subterm: rule-binder variables are wildcards, bound
@@ -672,17 +698,48 @@ private
             (var 0 (vArg (`ℕ (proj₂ p)) ∷ vArg (`ℕ (d ∸ 1 ∸ k)) ∷ [])))
          is)
 
-  processRuleMono : Head → Args Term → List (ArgInfo × Term) → Term → St
+  elemName : Name → List Name → Bool
+  elemName f []       = false
+  elemName f (g ∷ gs) = (f == g) ∨ elemName f gs
+
+  headsOf : List Term → List Name
+  headsOf []       = []
+  headsOf (c ∷ cs) = case headName c of λ where
+    (just f) → f ∷ headsOf cs
+    nothing  → headsOf cs
+
+  -- Re-align a rule side whose head spelling differs from the goal's:
+  -- rules re-exported through module applications state their operator
+  -- as a record projection (e.g. ⊔-comm's `MaxOperator._⊔_ … x y`
+  -- instead of `x ⊔ y`), which would never match.  If the side's head
+  -- does not occur among the goal's heads, try one `reduce`; keep the
+  -- reduced form only if its head DOES occur (this protects rules
+  -- about definitional constants, whose original head occurs in the
+  -- goal and must stay folded).
+  realign : List Name → Term → TC Term
+  realign gh t = case headName t of λ where
+    (just f) → if elemName f gh
+      then return t
+      else (do
+        t′ ← reduce t
+        case headName t′ of λ where
+          (just f′) → if elemName f′ gh then return (canonNums t′) else return t
+          nothing   → return t)
+    nothing → return t
+
+  processRuleMono : List Name → Head → Args Term → List (ArgInfo × Term) → Term → St
                   → TC (Term × St)
-  processRuleMono hd pre tel body st = do
+  processRuleMono gh hd pre tel body st = do
     (def (quote _≡_) (hArg _ ∷ hArg _ ∷ vArg lhs ∷ vArg rhs ∷ [])) ← return body
       where _ → error1 ("simp!: not an equation: " <+> show body)
     let depth = length tel
     (bs , st₁) ← goBinders 0 st tel
     let pats = reverse bs
     (lhsE , rhsE , st₂) ← extendCtxTel tel (do
-      (lhsE , sta) ← conv depth pats st₁ lhs
-      (rhsE , stb) ← conv depth pats sta rhs
+      lhs′ ← realign gh lhs
+      rhs′ ← realign gh rhs
+      (lhsE , sta) ← conv depth pats st₁ lhs′
+      (rhsE , stb) ← conv depth pats sta rhs′
       return (lhsE , rhsE , stb))
     lhsT ← quoteNorm lhsE
     rhsT ← quoteNorm rhsE
@@ -694,19 +751,19 @@ private
 
   -- Specialise the rule at one parameter assignment: apply the lemma
   -- to the instantiation and let Agda compute the remaining type.
-  processAssign : Name → List ArgInfo → St → List Term → TC (Term × St)
-  processAssign n infos st vals = do
+  processAssign : List Name → Name → List ArgInfo → St → List Term → TC (Term × St)
+  processAssign gh n infos st vals = do
     let pre = Data.List.zipWith arg infos vals
     specTy ← inferType (def n pre)
     (body , tel) ← stripAndReduce 100 specTy
-    processRuleMono (hName n) pre tel body st
+    processRuleMono gh (hName n) pre tel body st
 
-  processAssigns : Name → List ArgInfo → St → List (List Term)
+  processAssigns : List Name → Name → List ArgInfo → St → List (List Term)
                  → TC (List Term × St)
-  processAssigns n infos st []       = return ([] , st)
-  processAssigns n infos st (v ∷ vs) = do
-    (r  , st₁) ← processAssign n infos st v
-    (rs , st₂) ← processAssigns n infos st₁ vs
+  processAssigns gh n infos st []       = return ([] , st)
+  processAssigns gh n infos st (v ∷ vs) = do
+    (r  , st₁) ← processAssign gh n infos st v
+    (rs , st₂) ← processAssigns gh n infos st₁ vs
     return (r ∷ rs , st₂)
 
   processRule : List Term → St → Name → TC (List Term × St)
@@ -719,7 +776,7 @@ private
       then error1 ("simp!: rule parameters appear after pattern binders (unsupported): " <+> show n)
       else (case p of λ where
         zero → do
-          (r , st₁) ← processRuleMono (hName n) [] tel body st
+          (r , st₁) ← processRuleMono (headsOf cands) (hName n) [] tel body st
           return (r ∷ [] , st₁)
         _ → do
           (def (quote _≡_) (hArg _ ∷ hArg _ ∷ vArg lhs ∷ vArg _ ∷ [])) ← return body
@@ -728,7 +785,7 @@ private
             where nothing → error1 ("simp!: cannot instantiate a rule whose lhs is not an application: " <+> show n)
           case findAssignments (length tel) p hd lhs cands of λ where
             []    → error1 ("simp!: could not instantiate polymorphic rule from the goal: " <+> show n)
-            asgns → processAssigns n (map proj₁ (take p tel)) st asgns)
+            asgns → processAssigns (headsOf cands) n (map proj₁ (take p tel)) st asgns)
 
   processRules : List Term → List Name → St → TC (List Term × St)
   processRules cands []       st = return ([] , st)
@@ -752,7 +809,7 @@ private
     case anyB id flags of λ where
       true  → error1 ("simp!: polymorphic hypotheses are unsupported (use a monomorphic copy): " <+> show h)
       false → do
-        (r , st₁) ← processRuleMono (hTerm h) [] tel body st
+        (r , st₁) ← processRuleMono [] (hTerm h) [] tel body st
         return (r ∷ [] , st₁)
 
   processHyps : St → List Term → TC (List Term × St)
@@ -799,6 +856,26 @@ private
         else error1 "simpH!: hypothesis argument is not a list literal"
   unquoteHypList (suc fl) _ =
     error1 "simpH!: hypothesis argument is not a list literal"
+
+  -- The hypothesis argument of `simpH!` may be a single term, a
+  -- right-nested pair (h₁ , h₂ , …), or a list literal.  Macro
+  -- Term-arguments are elaborated like `quoteTerm`, so a LIST literal
+  -- forces one common element type — hypotheses with different
+  -- statements (the common case) must come as a pair, whose components
+  -- elaborate independently.
+  unquoteHyps : ℕ → Term → TC (List Term)
+  unquoteHyps 0 _ = error1 "simpH!: hypothesis tuple too deep"
+  unquoteHyps (suc fl) t@(con c args) =
+    if c == quote _,_
+      then (case filterVisible args of λ where
+        (a ∷ b ∷ []) → do
+          rest ← unquoteHyps fl b
+          return (a ∷ rest)
+        _ → error1 "simpH!: malformed hypothesis tuple")
+      else if (c == quote List._∷_) ∨ (c == quote List.[])
+        then unquoteHypList (suc fl) t
+        else return (t ∷ [])
+  unquoteHyps (suc fl) t = return (t ∷ [])
 
   ----------------------------------------------------------------
   -- Mixed universe levels (item 8).  The engine is level-uniform per
@@ -1027,13 +1104,23 @@ private
     let nfApp = def (quote RC.Eval.normalForm)
                   ( vArg TsT ∷ vArg opsT
                   ∷ vArg (`ℕ 100) ∷ vArg rulesT ∷ vArg eE ∷ [] )
-        valApp = def (quote RC.Eval.evalAt)
+    -- Read back the normal-form Expr first and refuse to evaluate huge
+    -- ones: rendering a deep normal form through the (non-sharing)
+    -- evaluator can take minutes, and a large form almost always means
+    -- a diverging (e.g. expanding) rule set anyway.
+    nfT ← normalise nfApp
+    nfE ← unquoteTC {A = RC.Expr} nfT
+    if 40 <ᵇ RC.sizeExpr nfE
+      then return ("(normal form with" <+> show (RC.sizeExpr nfE)
+                   <+> "nodes omitted — diverging rule set?)")
+      else (do
+        let valApp = def (quote RC.Eval.evalAt)
                   ( vArg TsT ∷ vArg opsT
                   ∷ vArg (`ℕ g)
                   ∷ vArg (def (quote RC.Eval.ρ₀) (vArg TsT ∷ vArg opsT ∷ []))
                   ∷ vArg nfApp ∷ [] )
-    t ← normalise valApp
-    return (show t)
+        t ← normalise valApp
+        return (show t))
 
   ----------------------------------------------------------------
   -- Relation goals (`simpRel!`).
@@ -1156,11 +1243,13 @@ private
         unifyStrict (hole , ty) (lam v (abs x hole′))
         extendContext (x , argTy)
           (runWithHole hole′ (simpRGoal fuel (suc depth) names hyps))
-      (def (quote _≡_) (hArg _ ∷ hArg _ ∷ vArg lhs ∷ vArg rhs ∷ [])) → do
+      (def (quote _≡_) (hArg _ ∷ hArg _ ∷ vArg lhs₀ ∷ vArg rhs₀ ∷ [])) → do
         -- Shift the call-site hypothesis terms past the binders we
         -- entered (their indices are relative to the call site, which
         -- excludes the stripped ∀-binders).
         let hyps′ = map (mapVars (_+ depth)) hyps
+            lhs   = canonNums lhs₀
+            rhs   = canonNums rhs₀
         cands ← enrichCandidates names (subApps lhs ++ subApps rhs)
         (ruleTs , st₀) ← processRules cands names (mkSt [] [])
         (hypTs  , st₀′) ← processHyps st₀ hyps′
@@ -1200,7 +1289,23 @@ private
         nf ← normalise (def (quote Data.Maybe.is-just) (vArg solveApp ∷ []))
         case nf of λ where
           (con c _) → if c == quote Data.Bool.false
-            then (do
+            -- Last resort: rewrite each side to its engine normal form
+            -- and close the remaining gap definitionally (refl in the
+            -- middle).  Handles goals that need rewriting AND a
+            -- definitional step (e.g. `(x + 0) + (2 + 3) ≡ x + 5`) and
+            -- purely definitional goals (`2 + 3 ≡ 5`).  Costs nothing
+            -- on the happy path.
+            then (let eqSide : Term → Term
+                      eqSide eT = def (quote RC.Eval.simplifyEq)
+                        ( vArg TsT ∷ vArg opsT ∷ vArg (`ℕ g) ∷ vArg (`ℕ 100)
+                        ∷ vArg rulesT ∷ vArg eT ∷ [] )
+                      composed = def (quote trans)
+                        ( vArg (eqSide lT)
+                        ∷ vArg (def (quote trans)
+                            ( vArg (con (quote refl) [])
+                            ∷ vArg (def (quote sym) (vArg (eqSide rT) ∷ [])) ∷ []))
+                        ∷ [] )
+                  in catch (unifyWithGoal (mkProof composed)) λ _ → do
               lNF ← showStuck TsT opsT g rulesT lT
               rNF ← showStuck TsT opsT g rulesT rT
               error1 ("simp!: simplification failed to close the goal;\n  the two sides reached the normal forms\n    "
@@ -1251,8 +1356,10 @@ private
         extendContext (x , argTy)
           (runWithHole hole′ (simpRelGoal fuel (suc depth) ri eqNames relNames))
       _ → do
-        (just (relN , prefix , lhs , rhs)) ← return (getRelSides ty)
+        (just (relN , prefix , lhs₀ , rhs₀)) ← return (getRelSides ty)
           where nothing → error1 "simpRel!: goal is not a binary relation"
+        let lhs = canonNums lhs₀
+            rhs = canonNums rhs₀
         -- (a) Build the engine tables + ≡-rules over BOTH sides.
         cands ← enrichCandidates eqNames (subApps lhs ++ subApps rhs)
         (ruleTs , st₁) ← processRules cands eqNames (mkSt [] [])
@@ -1332,7 +1439,7 @@ macro
   -- the QUOTED call-site expression, which we deconstruct here.
   simpH! : List Name → Term → Tactic
   simpH! names hypsExpr = initTacOpts (do
-    hyps ← unquoteHypList 100 hypsExpr
+    hyps ← unquoteHyps 100 hypsExpr
     simpHTactic names hyps) defaultTCOptions
 
   -- Prove `lhs ~ rhs` for a binary relation `~` by (a) ≡-normalising

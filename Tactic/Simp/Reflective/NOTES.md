@@ -97,3 +97,30 @@ trickiest part. The conventions, all visible in `processRuleMono` /
 When a soundness witness fails to type-check, it is nearly always an
 off-by-`d` or a missing `suc`-shift here — re-derive the index by hand against
 these four rules before touching anything else.
+
+## Additions from the testing campaign (2026-06-12)
+
+9. **Macro `Term`-arguments are elaborated like `quoteTerm`** — the
+   argument expression is type-checked (with a single inferred type)
+   before being quoted.  Consequence: a LIST literal of hypotheses
+   `(h₁ ∷ h₂ ∷ [])` only elaborates when all hypotheses have the same
+   statement.  Use a right-nested PAIR `(h₁ , h₂)` for heterogeneous
+   collections — Σ-pairs elaborate each component at its own type.
+
+10. **ℕ numerals have two reflected spellings** — `lit (nat 0)` and
+    `con zero []` (likewise `suc (lit n)`), and they are NOT
+    α-equal.  Any syntactic matcher must canonicalize one way (see
+    `canonNums` in the frontend), or a rule stated with `0` will not
+    match a goal written with `zero`.
+
+11. **Re-exported lemmas spell operators as record projections** —
+    e.g. `Data.Nat.Properties.⊔-comm` (re-exported through a module
+    application) states its operator as `MaxOperator._⊔_ … x y`, not
+    `x ⊔ y`.  A syntactic matcher must re-align such heads (one
+    `reduce`, guarded so definitional constants the user explicitly
+    references stay folded — see `realign`).
+
+12. **Don't render deep terms through the evaluator** — error-path
+    pretty-printing of a ~100-node deep-embedding normal form via
+    meta-level `normalise` takes minutes (no sharing).  Bound the size
+    first and summarize when large.

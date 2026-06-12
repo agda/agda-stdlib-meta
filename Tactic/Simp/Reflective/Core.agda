@@ -444,13 +444,37 @@ module Eval {ℓ} (Ts : List (Pointed ℓ)) (ops : List (WithSorts.Op Ts)) where
   ... | just (e′ , p) with simplify n rs e′
   ...   | (e″ , q) = e″ , λ s ρ → trans (p s ρ) (q s ρ)
 
+  -- Try reducing rules before permutative ones: a gated permutative
+  -- step (e.g. commutativity pulling a unit literal to the front) can
+  -- otherwise permanently destroy a redex of an ordinary rule.  Pure
+  -- list reordering — soundness is per-rule, so order is free.
+  prioritize : Rules → Rules
+  prioritize rs = nonPerm rs ++ʳ permOnly rs
+    where
+      _++ʳ_ : Rules → Rules → Rules
+      []       ++ʳ ys = ys
+      (x ∷ xs) ++ʳ ys = x ∷ (xs ++ʳ ys)
+
+      nonPerm : Rules → Rules
+      nonPerm [] = []
+      nonPerm (r ∷ rs) with Rule.perm r
+      ... | false = r ∷ nonPerm rs
+      ... | true  = nonPerm rs
+
+      permOnly : Rules → Rules
+      permOnly [] = []
+      permOnly (r ∷ rs) with Rule.perm r
+      ... | true  = r ∷ permOnly rs
+      ... | false = permOnly rs
+
   solve : ℕ → Rules → (l r : Expr) → Maybe (EStep l r)
-  solve n rs l r with simplify n rs l | simplify n rs r
-  ... | (l′ , p) | (r′ , q) with eqExpr? l′ r′
-  ...   | just eq =
-          just (λ s ρ → trans (p s ρ)
-                        (trans (cong (evalAt s ρ) eq) (sym (q s ρ))))
-  ...   | nothing = nothing
+  solve n rs₀ l r with prioritize rs₀
+  ... | rs with simplify n rs l | simplify n rs r
+  ...   | (l′ , p) | (r′ , q) with eqExpr? l′ r′
+  ...     | just eq =
+            just (λ s ρ → trans (p s ρ)
+                          (trans (cong (evalAt s ρ) eq) (sym (q s ρ))))
+  ...     | nothing = nothing
 
   -- Entry point for the macro: fix the goal sort and use the
   -- defaults environment (goal expressions are var-free).
@@ -467,7 +491,7 @@ module Eval {ℓ} (Ts : List (Pointed ℓ)) (ops : List (WithSorts.Op Ts)) where
   -- frontend uses ONLY on the failure path, to evaluate the two stuck
   -- sides into a goal-sized term for a better error message.
   normalForm : ℕ → Rules → Expr → Expr
-  normalForm n rs e = proj₁ (simplify n rs e)
+  normalForm n rs e = proj₁ (simplify n (prioritize rs) e)
 
   -- The verified ≡-step transporting one side of a relation goal to its
   -- engine normal form, at the goal sort, in the defaults environment.
@@ -475,7 +499,7 @@ module Eval {ℓ} (Ts : List (Pointed ℓ)) (ops : List (WithSorts.Op Ts)) where
   -- reduces (by definitional collapse) to `goalSide ≡ goalSideNF`.
   simplifyEq : (g : ℕ) (n : ℕ) (rs : Rules) (e : Expr)
              → evalAt g ρ₀ e ≡ evalAt g ρ₀ (normalForm n rs e)
-  simplifyEq g n rs e = proj₂ (simplify n rs e) g ρ₀
+  simplifyEq g n rs e = proj₂ (simplify n (prioritize rs) e) g ρ₀
 
 ----------------------------------------------------------------
 -- Maybe extraction that forces the solver at type-checking time.

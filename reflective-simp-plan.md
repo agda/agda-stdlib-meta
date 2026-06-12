@@ -250,3 +250,39 @@ f1e92f7, b78fd0f). What remains, in recommended order:
    over the `Tactic.Simp` name; whether the Bench module stays in-repo
    (it needs `+RTS -M11g` and ~164 s, so it should not join any default
    check path).
+
+## Testing campaign findings (2026-06-12)
+
+`Tactic/Simp/Reflective/Tests.agda`: ~50 tests across nine categories
+(goal shapes, rule shapes, polymorphic rules, ordered rewriting, local
+hypotheses, dictionaries, relation goals, universe levels, longer
+rewrites), plus commented-out documented limitations.  Issues found and
+fixed during the campaign:
+
+1. `zero`-spelled numerals didn't match literal-stated rules →
+   `canonNums` canonicalization at all reifier entry points.
+2. No definitional reasoning (`2 + 3 ≡ 5` failed) → failure-path
+   fallback, later strengthened to *compose* with rewriting: each side
+   is rewritten to its engine normal form and the residual gap is
+   closed by a definitional `refl` (`(x + 0) + (2 + 3) ≡ x + 5` works).
+3. Error path hung for minutes on diverging rule sets (rendering a
+   200-node normal form through the evaluator) → size guard with a
+   "diverging rule set?" hint.
+4. A gated permutative rule could permanently destroy an ordinary
+   rule's redex (comm pulling a unit literal forward before the
+   identity rule saw it; rule-order-dependent) → the engine now tries
+   non-permutative rules first (`prioritize`, pure reordering).
+5. Multiple hypotheses with different statements were impossible to
+   pass (macro Term-arguments elaborate like `quoteTerm`; list literals
+   force one element type) → `simpH!` accepts right-nested pairs.
+6. Rules re-exported through module applications (e.g. `⊔-comm`) spell
+   their operator as a record projection and never matched → guarded
+   head re-alignment (`realign`).
+
+Remaining documented limitations (commented tests): expanding rules
+diverge (clean failure with a hint); rhs-only rule variables never
+close; polymorphic hypotheses rejected; conditional rules unsupported
+(roadmap item 11).  Pleasant surprises: eta-contraction makes
+`λ x → suc x` match a rule about `suc`; instance binders, non-linear
+patterns, partial applications, `Set`-valued element types, and
+three-level goals all work unchanged.
