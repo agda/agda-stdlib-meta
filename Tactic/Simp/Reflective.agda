@@ -1348,7 +1348,7 @@ macro
 
 private
   open import Tactic.Defaults
-  open import Data.List.Properties using (++-identityʳ; length-map)
+  open import Data.List.Properties using (++-identityʳ; ++-identityˡ; length-map)
 
   -- *** ℕ tests (mirroring Tactic.Simp)
 
@@ -1558,6 +1558,34 @@ private
                        (quote n≤1+n ∷ [])
                        (mkRelInfo (quote ≤-trans) (quote ≤-refl))
 
+  -- Migration (item 13): old testRelB₂-style — the ~-target rhs `1 + (n + 0)`
+  -- is itself ≡-normalised by the engine (the rhs side is normalised too),
+  -- so the chain connects.  (This was a suspected gap; it works.)
+  testRelB₂ : ∀ {n : ℕ} → n + 0 ≤ 1 + (n + 0)
+  testRelB₂ = simpRel! (quote +-identityʳ ∷ [])
+                       (quote n≤1+n ∷ [])
+                       (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+
+  -- Migration (item 13): old testRelB₄-style — three chained ~-steps.
+  testRelB₄ : ∀ {n : ℕ} → n + 0 ≤ 3 + n
+  testRelB₄ = simpRel! (quote +-identityʳ ∷ [])
+                       (quote n≤1+n ∷ [])
+                       (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+
+  -- Migration (item 13): old testRelB₅-style — both sides exercised, two
+  -- ≡-rewrites on the LHS (n+0+0 → n) then two ~-steps to 2 + n.
+  testRelB₅ : ∀ {n : ℕ} → n + 0 + 0 ≤ 2 + n
+  testRelB₅ = simpRel! (quote +-identityʳ ∷ [])
+                       (quote n≤1+n ∷ [])
+                       (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+
+  -- Migration (item 13): old testRelB₆-style — LHS double-normalises and the
+  -- ~-target rhs `2 + (n + 0)` also normalises.
+  testRelB₆ : ∀ {n : ℕ} → n + 0 + 0 ≤ 2 + (n + 0)
+  testRelB₆ = simpRel! (quote +-identityʳ ∷ [])
+                       (quote n≤1+n ∷ [])
+                       (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+
   -- **** List permutation: simpRel! over _↭_ ****
 
   open import Data.List.Relation.Binary.Permutation.Propositional
@@ -1574,6 +1602,27 @@ private
   -- match-all-binders instantiates the polymorphic ++-comm uniformly.
   testBag₄ : ∀ (xs ys : List ℕ) → xs ++ ys ↭ ys ++ xs
   testBag₄ = simpRel! [] (quote ↭Prop.++-comm ∷ [])
+                      (mkRelInfo (quote ↭-trans) (quote ↭-refl))
+
+  -- Migration (item 13): old testBag₂-style — BOTH sides ≡-normalise to
+  -- the same form ([] ++ xs → xs and xs ++ [] → xs), ↭-refl closes.
+  -- Exercises the both-sides-changed path in buildRelProof.
+  testBag₂ : ∀ (xs : List ℕ) → [] ++ xs ↭ xs ++ []
+  testBag₂ = simpRel! (quote ++-identityˡ ∷ quote ++-identityʳ ∷ []) []
+                      (mkRelInfo (quote ↭-trans) (quote ↭-refl))
+
+  -- Migration (item 13): old testBag₃-style — mixed ≡+~ chain.  The LHS
+  -- ≡-normalises ([] ++ ys → ys) leaving xs ++ ys, then one ++-comm ~-step
+  -- reaches ys ++ xs.
+  testBag₃ : ∀ (xs ys : List ℕ) → xs ++ ([] ++ ys) ↭ ys ++ xs
+  testBag₃ = simpRel! (quote ++-identityˡ ∷ []) (quote ↭Prop.++-comm ∷ [])
+                      (mkRelInfo (quote ↭-trans) (quote ↭-refl))
+
+  -- Migration (item 13): old testBag₅-style — double ≡-normalisation
+  -- (two [] eliminations) on the LHS then one ↭ step.
+  testBag₅ : ∀ (xs ys : List ℕ) → xs ++ ([] ++ (ys ++ [])) ↭ ys ++ xs
+  testBag₅ = simpRel! (quote ++-identityˡ ∷ quote ++-identityʳ ∷ [])
+                      (quote ↭Prop.++-comm ∷ [])
                       (mkRelInfo (quote ↭-trans) (quote ↭-refl))
 
   -- *** Task 2: mixed universe levels

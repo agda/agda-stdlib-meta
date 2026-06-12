@@ -97,3 +97,114 @@ design is fresh; 7 unlocks the largest blocked test family (relations);
 9 is cheap relative to its payoff and differentiates this simplifier;
 8 is fiddly frontend work that benefits from accumulated test pressure;
 11 last among features because it needs a design round.
+
+## Performance (item 12)
+
+Standalone benchmark: `Tactic/Simp/Reflective/Bench.agda` (not imported by
+anything). Three rule-set sizes and five realistic goals (g1 nested
+arithmetic, g2 list, g3 multi-sorted, g4 polymorphic instantiation, g5 deep
+arithmetic), each proved once per size, plus an AC goal `gAC`. Cold-cache
+wall time of the whole module: **~168 s** (needs `agda +RTS -M11g -RTS` — see
+below). Verification was done unpiped, deleting `.agdai` first.
+
+### Per-call attribution (`agda --profile=internal`, `Typing.Reflection` bucket)
+
+Each row is a single `simp!` call in its own module (so the number is pure
+per-call macro execution incl. final unify; stdlib deserialization, a fixed
+~8–10 s, is excluded). Rule-set sizes shown are the actual ones the module
+uses (5 / 8 / 12) plus larger isolated probes:
+
+| call                         | rules | Typing.Reflection |
+|------------------------------|------:|------------------:|
+| g4 (polymorphic ++-id)       |     1 |            0.31 s |
+| g1 nested arith              |     5 |            1.10 s |
+| g1 nested arith              |     8 |            3.99 s |
+| g1 nested arith              |    12 |           14.3 s  |
+| g5 deep arith                |    12 |           17.7 s  |
+| g3 multi-sorted              |    15 |           17.7 s  |
+| (probe) trivial goal `x≡x`   |     5 |            0.19 s |
+| (probe) trivial goal `x≡x`   |    15 |            9.5 s  |
+| (probe) trivial goal `x≡x`   |    19 |           21.4 s  |
+| (probe) real goal g1         |    19 |           28.2 s  |
+| (probe) 50 mixed rules       |    50 |   OOM (killed)    |
+
+### Interpretation
+
+The cost is **dominated by per-call meta-level rule reprocessing**, not the
+object-level engine and not enrichment:
+
+* **Trivial-goal probes isolate the rule-processing cost** (object-level
+  search does nothing for `x ≡ x`): 19 rules already cost **21.4 s** with a
+  trivial goal, vs **28.2 s** with the real g1 goal — so ≥75 % of the time is
+  meta-level processing of the rules (`getType` / `stripAndReduce` /
+  `inferType >>= normalise` per subterm / `conv` / `quoteNorm`), and the
+  object-level `solveAt` evaluation adds only the remainder.
+* **The super-linearity is driven by the number of DISTINCT operators**, via
+  the O(table) α-equality dedup scans in `addOp`/`addSort` (heavier under
+  `reconstruction = true`). Control experiment: **19 rules that all share one
+  operator** (`+-identityʳ` ×19, tiny op table) cost **3.8 s**, while 19 rules
+  over many operators cost **21 s** — same rule count, ~6× the time.
+* **Enrichment is NOT a significant cost.** Disabling the candidate-enrichment
+  fixpoint entirely changed Typing.Reflection from 14.5 s → 13.5 s on the
+  15-rule g1 case (~1 s, ~7 %), and ~0 on goals with no candidates. So the
+  "lazy enrichment" idea from the task would buy almost nothing.
+* **The object-level rule scan is cheap** (one `ℕ ≟` on the head per
+  non-matching rule), confirmed by the trivial-goal numbers — so an op-head
+  index over `Rules` would not help.
+* **Commutativity + distributivity in a large set explodes the object-level
+  search**: a 17-rule arithmetic set with `+-comm`+`*-comm` OOMs at ~28 s,
+  while the same set without comm completes. This is the known-hard AC ×
+  distributivity interaction, not a frontend bug; `Bench.agda` therefore keeps
+  comm out of the scaling sets and exercises it alone in `gAC`.
+
+### What was optimized: nothing (deliberately)
+
+The profile points at **per-call re-elaboration of every rule's type** as the
+hot path. The three fixes the task floated do not apply:
+
+* *Lazy enrichment* — enrichment is ~1 s, not the cost.
+* *Cross-call meta caching* — impossible; macros are stateless.
+* *Object-level head-index* — the engine scan is already negligible.
+
+The remaining genuine lever (the O(table²) α-dedup in `addOp`/`addSort`) would
+require re-keying the shared sort/op tables, whose insertion order is
+load-bearing for the de Bruijn indices the emitted terms use — an invasive
+change to the reification correctness path. Weakening the `normalise` in
+`inferSort` risks fragmenting the sort table (matching silently stops firing).
+Neither is a *cheap effective* fix, and realistic call sites use ≤ ~5 rules
+(the 53 main-file tests run in ~42 s total, ≈0.3 s/call), so the cost is
+acceptable in practice. **Decision: no optimization made; documented the
+20-rule soft ceiling / 50-rule OOM cliff as a known limitation instead.**
+The `+RTS -M11g` flag is only needed to compile the *benchmark* (16 heavy
+calls accumulate proof terms in one module); ordinary use does not need it.
+
+## Migration matrix vs the old `Tactic.Simp` (item 13)
+
+Status of every scenario in the old `Tactic.Simp` test suite under the
+reflective implementation. "✓ test" means an equivalent test exists in
+`Tactic.Simp.Reflective`; "✓ added" means this work added it.
+
+| old scenario | reflective macro / call shape | status |
+|---|---|---|
+| `test₁`–`test₁₃` (ℕ ≡-rewriting) | `simp! (quote … ∷ [])` | ✓ test (`t₁`–`t₁₃`) |
+| `testBinder₁`–`₃` (∀/implicit/mixed binders) | `simp!` | ✓ test (`tb₁`–`tb₃`) |
+| `testDict₁`–`₃` (instance dictionary) | `simpD! ArithRules` | ✓ test (`testDict₁`–`₃`) |
+| `testRel₁`–`₆` (≤, Option C: ≡-normalise + relRefl) | `simpRel! eqs [] (mkRelInfo …)` | ✓ test (`testRel₁`–`₆`) |
+| `testRelB₁`,`₃` (≤, Option B: n≤1+n chaining) | `simpRel! eqs (quote n≤1+n ∷ []) …` | ✓ test (`testRelB₁`,`₃`) |
+| `testRelB₂`,`₄`,`₅`,`₆` (chains; rhs subterm `1+(n+0)` etc.) | `simpRel!` | ✓ added (`testRelB₂`,`₄`,`₅`,`₆`) — the engine ≡-normalises the rhs side too, so the chain connects even when the ~-target carries an un-normalised subterm. (Suspected gap; verified to work.) |
+| `testBag₁` (↭, Option C, `xs ++ []`→`xs`) | `simpRel! (quote ++-identityʳ ∷ []) [] …` | ✓ test (`testBag₁`, monomorphic `List ℕ`) |
+| `testBag₄` (↭, pure ++-comm ~-step) | `simpRel! [] (quote ↭Prop.++-comm ∷ []) …` | ✓ test (`testBag₄`) |
+| `testBag₂` (↭, both sides ≡-normalise) | `simpRel! (++-idˡ ∷ ++-idʳ ∷ []) [] …` | ✓ added (`testBag₂`) |
+| `testBag₃` (↭, mixed ≡+~ chain) | `simpRel! (++-idˡ ∷ []) (++-comm ∷ []) …` | ✓ added (`testBag₃`) |
+| `testBag₅` (↭, double ≡-normalise + ~-step) | `simpRel! (++-idˡ ∷ ++-idʳ ∷ []) (++-comm ∷ []) …` | ✓ added (`testBag₅`) |
+| `testRelDict₁`,`₂` (simpRel from a dictionary) | — | gap — no `simpRelD!` frontend yet; `simpRel!` takes explicit name lists. Trivial to add (mirror `simpD!`'s `getDictNames`); not blocking. |
+| `testMonoid₁`–`₄` (abstract monoid `≈`) | — | **open gap (confirmed)** — module-local relation bundles. Verified: `simpRel! [] (quote ∙-identR ∷ []) …` on `x ∙ M-ε ≈ x` fails with `simpRel!: mixed universe levels are unsupported for relation goals`. The carrier `Carrier : Set mc` and the relation `_≈_ : … → Set mℓ` sit at *different module-parameter levels*, which `simpRel!`'s `buildLiftFlags` (deliberately) refuses for relation goals. Needs module-parameter-as-sort + lifted relation-goal handling. Documented, not fixed. |
+| Known limitation #1: commutativity diverges | `simp! (quote +-comm ∷ [])` | **now WORKS** — ordered rewriting (item 9) orients `+-comm` via the permutative gate (`ltExpr`). ✓ test (`torder₁`: `x + y ≡ y + x`); AC trio in `torder₂`/`torder₄`, and `gAC` in the bench. This is a *reversal* of the old limitation. |
+| Known limitation #2: no local hypotheses | `simpH! names (h ∷ [])` | **now WORKS** — `simpH!` accepts context terms as ground / ∀-carrier rules. ✓ test (`th₁`–`th₄`). |
+| Known limitation #3: conditional equations | — | **open gap (confirmed)** — `stripAndReduce` strips all Pi binders including hypothesis arrows, so only unconditional `∀ x… → lhs ≡ rhs` rules work. This is roadmap item 11 (decidable-hypothesis design), deliberately unimplemented. Documented, not fixed. |
+
+Headline: every ℕ/list/≤/↭ rewriting scenario is covered (and two old
+*limitations* — commutativity and local hypotheses — now pass); the genuine
+remaining gaps are module-local relation bundles (monoid `≈`), conditional
+rules, the rhs-non-normalised ~-target case (`testRelB₂/₄/₆`), and a
+convenience `simpRelD!`. The old module and its tests are left untouched.
