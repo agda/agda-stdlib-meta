@@ -279,6 +279,15 @@ fixed during the campaign:
    their operator as a record projection and never matched → guarded
    head re-alignment (`realign`).
 
+Relation-goal coverage (section G, 13 tests): ≤ (refl-close, one-sided
+and both-sided normalisation, literal and definitional-gap goals, up to
+three chained ~-steps), the alias relations ≥ and < (the goal's whnf
+unfolds them to their ≤ core), ↭ (rewriting under conses, polymorphic
+++-comm chaining), and ordered rewriting inside relation goals.  New
+documented limitation: relations DEFINED as functions (e.g. ⊆) unfold
+to Π-types under the goal whnf and the binder recursion descends into
+them — needs unfolding control or a wrapper relation.
+
 Remaining documented limitations (commented tests): expanding rules
 diverge (clean failure with a hint); rhs-only rule variables never
 close; polymorphic hypotheses rejected; conditional rules unsupported

@@ -22,7 +22,8 @@ open import Data.List.Properties
   using (++-identityʳ; map-id; reverse-involutive; length-map)
 open import Data.List.Relation.Binary.Permutation.Propositional
   using (_↭_; ↭-refl; ↭-trans)
-open import Data.Nat using (ℕ; zero; suc; _+_; _*_; _∸_; _⊔_; _≤_)
+import Data.List.Relation.Binary.Permutation.Propositional.Properties as ↭Prop
+open import Data.Nat using (ℕ; zero; suc; _+_; _*_; _∸_; _⊔_; _≤_; _≥_; _<_)
 open import Data.Nat.Properties
   using ( +-identityʳ; +-identityˡ; *-identityʳ; *-zeroʳ; +-assoc; +-comm
         ; n∸n≡0; ⊔-comm; ≤-refl; ≤-trans; n≤1+n)
@@ -259,18 +260,80 @@ gF₂ : ∀ (l : List ℕ) → l ++ [] ≡ l
 gF₂ l = simpD! ListDict
 
 ----------------------------------------------------------------
--- G. Relation goals
+-- G. Relation goals (non-equality relations)
 ----------------------------------------------------------------
+
+≤-info : RelInfo
+≤-info = mkRelInfo (quote ≤-trans) (quote ≤-refl)
+
+↭-info : RelInfo
+↭-info = mkRelInfo (quote ↭-trans) (quote ↭-refl)
 
 -- rewriting under a cons inside a permutation goal
 gG₁ : ∀ (x : ℕ) (xs : List ℕ) → x ∷ (xs ++ []) ↭ x ∷ xs
-gG₁ x xs = simpRel! (quote ++-identityʳ ∷ []) []
-                    (mkRelInfo (quote ↭-trans) (quote ↭-refl))
+gG₁ x xs = simpRel! (quote ++-identityʳ ∷ []) [] ↭-info
 
 -- both sides ≡-normalise, then two ~-steps
 gG₂ : ∀ {n : ℕ} → n + 0 ≤ 2 + (n + 0)
-gG₂ = simpRel! (quote +-identityʳ ∷ []) (quote n≤1+n ∷ [])
-               (mkRelInfo (quote ≤-trans) (quote ≤-refl))
+gG₂ = simpRel! (quote +-identityʳ ∷ []) (quote n≤1+n ∷ []) ≤-info
+
+-- refl-close after lhs-only normalisation
+gG₃ : ∀ {n : ℕ} → n + 0 ≤ n
+gG₃ = simpRel! (quote +-identityʳ ∷ []) [] ≤-info
+
+-- rhs-side-only normalisation
+gG₄ : ∀ {n : ℕ} → n ≤ n + 0
+gG₄ = simpRel! (quote +-identityʳ ∷ []) [] ≤-info
+
+-- mixed binders, two ≡-rules
+gG₅ : ∀ (m : ℕ) {n : ℕ} → (m + 0) + (0 + n) ≤ m + n
+gG₅ m = simpRel! (quote +-identityˡ ∷ quote +-identityʳ ∷ []) [] ≤-info
+
+-- three chained ~-steps
+gG₆ : ∀ {n : ℕ} → n + 0 ≤ 3 + n
+gG₆ = simpRel! (quote +-identityʳ ∷ []) (quote n≤1+n ∷ []) ≤-info
+
+-- literals
+gG₇ : 5 + 0 ≤ 5
+gG₇ = simpRel! (quote +-identityʳ ∷ []) [] ≤-info
+
+-- definitional gap closed by the reflexivity emission's unification
+gG₈ : 2 + 3 ≤ 5
+gG₈ = simpRel! [] [] ≤-info
+
+-- alias relations: whnf of the goal unfolds them to their ≤ core
+gG₉ : ∀ {n : ℕ} → n ≥ n + 0
+gG₉ = simpRel! (quote +-identityʳ ∷ []) [] ≤-info
+
+gG₁₀ : ∀ {n : ℕ} → n + 0 < 1 + n
+gG₁₀ = simpRel! (quote +-identityʳ ∷ []) [] ≤-info
+
+-- deeper rewriting inside a permutation goal (two conses above)
+gG₁₁ : ∀ (x y : ℕ) (xs : List ℕ) → x ∷ y ∷ (xs ++ []) ↭ x ∷ y ∷ xs
+gG₁₁ x y xs = simpRel! (quote ++-identityʳ ∷ []) [] ↭-info
+
+-- ≡-normalisation, then a polymorphic ~-rule (++-comm) instantiated
+-- by the match-all-binders chaining
+gG₁₂ : ∀ (xs ys : List ℕ) → (xs ++ []) ++ ys ↭ ys ++ xs
+gG₁₂ xs ys = simpRel! (quote ++-identityʳ ∷ []) (quote ↭Prop.++-comm ∷ []) ↭-info
+
+-- ordered rewriting (permutative +-comm) inside a relation goal
+gG₁₃ : ∀ {x y : ℕ} → x + y ≤ (y + x) + 0
+gG₁₃ = simpRel! (quote +-comm ∷ quote +-identityʳ ∷ []) [] ≤-info
+
+-- LIMITATION (documented): relations DEFINED as functions unfold under
+-- the goal's whnf — `xs ⊆ ys` (= ∀ {x} → x ∈ xs → x ∈ ys) turns into a
+-- Π-type, the binder recursion descends into the membership arrow, and
+-- the tactic fails on the `∈`-leaf.  Needs relation-aware unfolding
+-- control (or a wrapper relation).
+--   gG₁₄ : ∀ (xs : List ℕ) → xs ++ [] ⊆ xs
+--   gG₁₄ xs = simpRel! (quote ++-identityʳ ∷ []) []
+--                      (mkRelInfo (quote ⊆-trans) (quote ⊆-refl))
+
+-- LIMITATION (documented): relation goals mixing universe levels error
+-- cleanly ("simpRel!: mixed universe levels are unsupported for
+-- relation goals") — e.g. the abstract monoid `≈` family, where the
+-- carrier and relation live at different module-parameter levels.
 
 ----------------------------------------------------------------
 -- H. Universe levels
