@@ -433,3 +433,66 @@ conditional-rule gate and relation-hypotheses next because they reuse
 existing plumbing; the level/monoid pair after that as one block of
 Lift-machinery work; research items (9's symbolic half, 11) last,
 gated on demand from real usage.
+
+## Lessons from the ring-solver refactor (worktree-ring-solver, 2026-06-12)
+
+The sibling reflective ring solver (`Tactic/Solver/{Algebra,Ring}.agda`)
+was refactored onto a generic `Theory` abstraction and — crucially —
+added ~360 lines of NEW shared `--safe --without-K` reflection infra
+under `Reflection/Utils/` that the `simp` branch does NOT yet have:
+`Reduction.agda` (107), `Records.agda` (53), `AtomStore.agda` (52),
+`Goal.agda` (75), plus `Core`/`Args`/`Metas` additions. Verified to
+exist on that branch. Transferable lessons, by priority:
+
+1. **Controlled reduction for folded recognition** (`Reflection.Utils.Reduction`:
+   `whnfBlocking` / `headReduce` / `resolveToName`, all on `withReduceDefs`).
+   The solver does plain `inferType hole` for the goal type (`Algebra.agda:421`),
+   then wraps only the per-node `reduce` analysis in
+   `withReduceDefs (false , blockedNames)` (`:423`, `:354`). This is the
+   RIGHT way to do the reduction control I failed at: I blocked during
+   `inferType` (broke level inference) — they block during `reduce`
+   AFTER a plain `inferType`. `Records.projectField` resolves a bundle
+   field to its folded NAME (e.g. `1#` of ℚ → `1ℚ`, never `mkℚ …`) —
+   exactly the `ring-solver-literal-unfolding` problem, solved.
+   → Most relevant to limitation (4) **module-local / abstract bundle
+   relations (monoid `≈`)** — the blocker for deprecating the lossy
+   `Tactic.Simp`. Abstract-bundle `≈`/`+` are STUCK projections; head-
+   name matching after blocked-reduce recognises them folded. Concrete
+   function-defined relations like `⊆` (limitation 2) are LESS certain:
+   `inferType hole` appears to pre-unfold them, so this may not suffice
+   without `whnfBlocking` on the goal type — needs a direct experiment.
+
+2. **`Reflection.Utils.AtomStore` two-key dedup**: an atom is
+   `(original-spelling , whnf-key)`; dedup on `orig =α= ∨ whnf =α=`,
+   emit the original. Cleaner/cheaper than my `canonNums` numeral
+   canonicalisation and the composed-definitional fallback. → adopt.
+
+3. **`Theory` = precompute-then-walk split** (`Algebra.agda:121-239`):
+   a `DetectedTheory` (operators with pattern+encoder in ONE record, no
+   parallel lists; `blockedNames`; literal spec) computed ONCE by
+   `detect`, then a generic `solveByTheory` walk. My `St` op/sort tables
+   are grown mutably during `conv` and `=α=`-deduped (the perf ceiling I
+   abandoned re-keying for). A precompute-then-walk split, with operator
+   recognition keyed by HEAD NAME (cheap) separate from per-occurrence
+   sort lookup, is the structural change that makes that re-keying
+   tractable. → adapt (keep the multi-sorted verified Core).
+
+4. **Evaluator discipline (confirmed cross-tactic)**: separate forced
+   list traversals beat fused pair-returning `go`s in reflection-
+   evaluated code (both tactics independently hit OOM from the latter).
+   Already in my NOTES; keep as a standing rule.
+
+5. **`Reflection.Utils.Goal`** (`underPis`, `equationSides`,
+   `blockOnEquationMetas`): relation-agnostic side extraction (last two
+   visible args) and robust binder-prefix handling with matching
+   visibility. → consider routing `simpRel!`/`simp!` binder handling
+   through it.
+
+Do NOT copy the ring solver's trust model (its backend `solve` is
+trusted; my `--safe` Core is strictly stronger) or its single-sorted
+`opDrop`/`EncodeEnv` assumptions.
+
+Strategic note: items 1 & 2 (and possibly 5) are SHARED infra that
+ideally lands once in `Reflection/Utils/` for both tactics rather than
+being copied — a cross-branch consolidation to coordinate when these
+branches merge.
