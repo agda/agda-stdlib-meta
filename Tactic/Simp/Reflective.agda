@@ -65,7 +65,7 @@ open import Meta.Prelude
 open import Reflection.AST.Literal using (nat)
 open import Reflection.AlphaEquality
 open import Reflection.Tactic
-open import Reflection.Utils hiding (args)
+open import Reflection.Utils hiding (args; headName)
 open import Reflection.Utils.TCI using (unifyStrict)
 
 open import Class.Monad
