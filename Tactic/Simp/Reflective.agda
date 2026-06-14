@@ -103,16 +103,23 @@ private
   -- ops:   (canonical impl term , argument sorts , result sort)
   record St : Set where
     constructor mkSt
-    field sorts : List (Term × Maybe Term)
-          ops   : List (Term × List ℕ × ℕ)
+    field sorts  : List (Term × Maybe Term)
+          ops    : List (Term × List ℕ × ℕ)
+          -- The goal relation's bundle parameter `M` (e.g. an abstract
+          -- `Monoid`), if any.  A bundle operation `R.op M args…` is a
+          -- record projection whose FIRST explicit arg is the bundle;
+          -- it is dropped during reification (baked into the impl like
+          -- a hidden arg) so that `M` — whose type sits at a higher
+          -- universe level than the carrier — never becomes a sort.
+          bundle : Maybe Term
 
   keepW : Maybe Term → Maybe Term → Maybe Term
   keepW (just w) _ = just w
   keepW nothing  w = w
 
   addSort : Term → Maybe Term → St → ℕ × St
-  addSort ty w (mkSt sorts ops) =
-    let (i , sorts′) = go sorts in (i , mkSt sorts′ ops)
+  addSort ty w (mkSt sorts ops b) =
+    let (i , sorts′) = go sorts in (i , mkSt sorts′ ops b)
     where
       go : List (Term × Maybe Term) → ℕ × List (Term × Maybe Term)
       go [] = 0 , (ty , w) ∷ []
@@ -127,8 +134,8 @@ private
   eqSorts _        _        = false
 
   addOp : Term → List ℕ → ℕ → St → ℕ × St
-  addOp im as r (mkSt sorts ops) =
-    let (i , ops′) = go ops in (i , mkSt sorts ops′)
+  addOp im as r (mkSt sorts ops b) =
+    let (i , ops′) = go ops in (i , mkSt sorts ops′ b)
     where
       go : List (Term × List ℕ × ℕ) → ℕ × List (Term × List ℕ × ℕ)
       go [] = 0 , (im , as , r) ∷ []
@@ -302,21 +309,48 @@ private
   anyHiddenOpen depth (arg _ t ∷ as)                     =
     usesVarBelow depth t ∨ anyHiddenOpen depth as
 
+  -- First/last visible argument of an application's arg list.
+  firstVisibleArg : Args Term → Maybe Term
+  firstVisibleArg []                                = nothing
+  firstVisibleArg (arg (arg-info visible _) t ∷ _)  = just t
+  firstVisibleArg (_ ∷ as)                          = firstVisibleArg as
+
+  lastVisibleArg : Args Term → Maybe Term
+  lastVisibleArg = go nothing
+    where
+      go : Maybe Term → Args Term → Maybe Term
+      go acc []                                 = acc
+      go acc (arg (arg-info visible _) t ∷ as)  = go (just t) as
+      go acc (_ ∷ as)                           = go acc as
+
+  -- Should this application's first visible arg be dropped as the
+  -- bundle?  Yes iff the goal has a bundle `M` and the arg (strengthened
+  -- out of the rule telescope) is α-equal to it.
+  shouldDrop : ℕ → Maybe Term → Args Term → Bool
+  shouldDrop depth (just bM) as = case firstVisibleArg as of λ where
+    (just t) → strengthenBy depth t =α= bM
+    nothing  → false
+  shouldDrop _ nothing _ = false
+
   -- λ x₁ … xₙ → head {hidden…} x₁ … xₙ  with the closed non-visible
-  -- arguments strengthened out of the rule telescope and shifted
-  -- under the new lambdas.
-  mkImpl : ℕ → Term → Args Term → Term
-  mkImpl depth hd as = wrapLams n (rebuild hd (go 0 as))
+  -- arguments strengthened out of the rule telescope and shifted under
+  -- the new lambdas.  When `dropFst`, the FIRST visible arg is also
+  -- baked in (the bundle `M`), not bound — so the op has one fewer
+  -- operand.
+  mkImpl : ℕ → Bool → Term → Args Term → Term
+  mkImpl depth dropFst hd as = wrapLams n (rebuild hd (go 0 false as))
     where
       n : ℕ
-      n = countVisible as
+      n = countVisible as ∸ (if dropFst then 1 else 0)
 
-      go : ℕ → Args Term → Args Term
-      go k []                                   = []
-      go k (arg i@(arg-info visible _) _ ∷ rest) =
-        arg i (var (n ∸ 1 ∸ k) []) ∷ go (suc k) rest
-      go k (arg i t ∷ rest)                      =
-        arg i (mapVars (λ v → v ∸ depth + n) t) ∷ go k rest
+      go : ℕ → Bool → Args Term → Args Term
+      go k seen []                                   = []
+      go k seen (arg i@(arg-info visible _) t ∷ rest) =
+        if dropFst ∧ not seen
+          then arg i (mapVars (λ v → v ∸ depth + n) t) ∷ go k true rest
+          else arg i (var (n ∸ 1 ∸ k) []) ∷ go (suc k) seen rest
+      go k seen (arg i t ∷ rest)                     =
+        arg i (mapVars (λ v → v ∸ depth + n) t) ∷ go k seen rest
 
   ----------------------------------------------------------------
   -- Reification: Term → Core.Expr, growing the tables.
@@ -364,8 +398,9 @@ private
         _ → if anyHiddenOpen depth as
           then error1 ("simp!: hidden arguments mention rule variables (polymorphic rule? use a monomorphic wrapper): " <+> show orig)
           else (do
-            (es , st₁) ← convArgs depth pats st as
-            let im = mkImpl depth hd as
+            let drop = shouldDrop depth (St.bundle st) as
+            (es , st₁) ← convArgs depth pats st drop as
+            let im = mkImpl depth drop hd as
             case findOpByImpl im (St.ops st₁) of λ where
               -- Repeat operator: result sort already known, skip inferType;
               -- still merge a witness this occurrence may supply.
@@ -375,14 +410,18 @@ private
                 let (o , st₃) = addOp im (map RC.sortOf es) r st₂
                 return (RC.Expr.op o r es , st₃))
 
-    -- Converts the visible arguments only (structural recursion).
-    convArgs : ℕ → List ℕ → St → Args Term → TC (List RC.Expr × St)
-    convArgs depth pats st [] = return ([] , st)
-    convArgs depth pats st (arg (arg-info visible _) t ∷ as) = do
-      (e  , st₁) ← conv depth pats st t
-      (es , st₂) ← convArgs depth pats st₁ as
-      return (e ∷ es , st₂)
-    convArgs depth pats st (_ ∷ as) = convArgs depth pats st as
+    -- Converts the visible arguments only (structural recursion on the
+    -- arg list).  `drop` skips the first visible arg (the bundle).
+    convArgs : ℕ → List ℕ → St → Bool → Args Term → TC (List RC.Expr × St)
+    convArgs depth pats st drop [] = return ([] , st)
+    convArgs depth pats st drop (arg (arg-info visible _) t ∷ as) =
+      if drop
+        then convArgs depth pats st false as
+        else (do
+          (e  , st₁) ← conv depth pats st t
+          (es , st₂) ← convArgs depth pats st₁ false as
+          return (e ∷ es , st₂))
+    convArgs depth pats st drop (_ ∷ as) = convArgs depth pats st drop as
 
     convAtom : ℕ → St → Term → TC (RC.Expr × St)
     convAtom depth st t =
@@ -1290,7 +1329,7 @@ private
             lhs   = canonNums lhs₀
             rhs   = canonNums rhs₀
         cands ← enrichCandidates names (subApps lhs ++ subApps rhs)
-        (ruleTs , st₀) ← processRules cands names (mkSt [] [])
+        (ruleTs , st₀) ← processRules cands names (mkSt [] [] nothing)
         (hypTs  , st₀′) ← processHyps st₀ hyps′
         let allRuleTs = ruleTs ++ hypTs
         (lhsE , st₁) ← conv 0 [] st₀′ lhs
@@ -1399,9 +1438,13 @@ private
           where nothing → error1 "simpRel!: goal is not a binary relation"
         let lhs = canonNums lhs₀
             rhs = canonNums rhs₀
+            -- Bundle parameter (e.g. an abstract Monoid): the relation's
+            -- last visible prefix arg.  Bundle operations are dropped
+            -- during reification so the bundle never becomes a sort.
+            bM  = lastVisibleArg prefix
         -- (a) Build the engine tables + ≡-rules over BOTH sides.
         cands ← enrichCandidates eqNames (subApps lhs ++ subApps rhs)
-        (ruleTs , st₁) ← processRules cands eqNames (mkSt [] [])
+        (ruleTs , st₁) ← processRules cands eqNames (mkSt [] [] bM)
         (lhsE , st₂) ← conv 0 [] st₁ lhs
         (rhsE , st₃) ← conv 0 [] st₂ rhs
         -- Mixed universe levels are not supported for relation goals

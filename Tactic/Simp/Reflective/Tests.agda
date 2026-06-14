@@ -23,6 +23,7 @@ open import Data.List.Properties
 open import Data.List.Relation.Binary.Permutation.Propositional
   using (_↭_; ↭-refl; ↭-trans)
 import Data.List.Relation.Binary.Permutation.Propositional.Properties as ↭Prop
+import Algebra.Bundles as AlgB
 open import Data.Nat using (ℕ; zero; suc; _+_; _*_; _∸_; _⊔_; _≤_; _≥_; _<_)
 open import Data.Nat.Properties
   using ( +-identityʳ; +-identityˡ; *-identityʳ; *-zeroʳ; +-assoc; +-comm
@@ -354,10 +355,43 @@ gGD₁ xs ys = simpRelD! BagEqRules NoRules ↭-info
 gGD₂ : ∀ (xs ys : List ℕ) → xs ++ ys ↭ ys ++ xs
 gGD₂ xs ys = simpRelD! NoRules BagRelRules ↭-info
 
--- LIMITATION (documented): relation goals mixing universe levels error
--- cleanly ("simpRel!: mixed universe levels are unsupported for
--- relation goals") — e.g. the abstract monoid `≈` family, where the
--- carrier and relation live at different module-parameter levels.
+-- Abstract bundle relations: `simpRel!` over an arbitrary `Monoid M`'s
+-- `_≈_`, with `_∙_`/`ε` recognised as bundle operations (their leading
+-- bundle argument `M` is dropped during reification, so `M` — at a
+-- higher universe level than the carrier — never becomes a sort).
+module MonoidTests {c ℓ} (M : AlgB.Monoid c ℓ) where
+  open AlgB.Monoid M renaming (refl to ≈refl; trans to ≈trans)
+
+  private
+    ∙-idʳ : ∀ x → x ∙ ε ≈ x
+    ∙-idʳ = identityʳ
+    ∙-idˡ : ∀ x → ε ∙ x ≈ x
+    ∙-idˡ = identityˡ
+    ∙-assoc : ∀ x y z → (x ∙ y) ∙ z ≈ x ∙ (y ∙ z)
+    ∙-assoc = assoc
+    ≈refl′ : ∀ {x} → x ≈ x
+    ≈refl′ = ≈refl
+    ≈trans′ : ∀ {x y z} → x ≈ y → y ≈ z → x ≈ z
+    ≈trans′ = ≈trans
+
+  M-info : RelInfo
+  M-info = mkRelInfo (quote ≈trans′) (quote ≈refl′)
+
+  -- single ≈-step
+  tMon₁ : ∀ x → x ∙ ε ≈ x
+  tMon₁ x = simpRel! [] (quote ∙-idʳ ∷ []) M-info
+
+  -- two nested identity steps
+  tMon₂ : ∀ x → (x ∙ ε) ∙ ε ≈ x
+  tMon₂ x = simpRel! [] (quote ∙-idʳ ∷ []) M-info
+
+  -- both identities
+  tMon₃ : ∀ x → ε ∙ (x ∙ ε) ≈ x
+  tMon₃ x = simpRel! [] (quote ∙-idʳ ∷ quote ∙-idˡ ∷ []) M-info
+
+  -- associativity + identity (mirrors old Tactic.Simp testMonoid₄)
+  tMon₄ : ∀ x y z → ((x ∙ y) ∙ z) ∙ ε ≈ x ∙ (y ∙ z)
+  tMon₄ x y z = simpRel! [] (quote ∙-idʳ ∷ quote ∙-assoc ∷ []) M-info
 
 ----------------------------------------------------------------
 -- H. Universe levels
