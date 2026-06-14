@@ -306,15 +306,41 @@ trusts the meta level; prefer features that keep that invariant.
 
 ### Tier 1 — Foundations under load
 
-1. **Table re-keying** (the known performance ceiling). Per-call cost is
-   super-linear in distinct operators via O(table) `=α=` scans in
-   `addOp`/`addSort`; ~20 rules ≈ 20 s/call, 50 rules OOM. Bucket both
-   tables by head `Name` (α-compare only within a bucket); atoms bucket
-   by their own head or a literal tag. Invasive to the de-Bruijn-
-   load-bearing reification path — now tractable with the 57-test suite
-   and the bench as safety nets. Re-run `Bench.agda` before/after.
-   This gates Lean-style large default rule sets and `simpD!`
-   dictionaries beyond toy size.
+1. **Table re-keying — ATTEMPTED 2026-06-12, ABANDONED (negative result).**
+   Hypothesis (from the Phase-4 profile): per-call cost is super-linear
+   in distinct operators via O(table) `=α=` dedup scans in
+   `addOp`/`addSort`, so bucketing by head `Name` should help. Two
+   implementations, both refuted:
+   - *Threaded name-keyed index in `St`*: logically correct, but OOMs
+     the macro-time evaluator (>12 GB on a 3-operator goal). Agda's
+     reflection evaluator does not share a growing index structure
+     threaded through the deep `conv` recursion the way GHC thunks
+     would; memory scales super-linearly with repeated subterms.
+     (Aside: `_∷ʳ_` for the flat list is also a left-nested-append
+     quadratic trap — use cons-reversed + one final `reverse`.)
+   - *Head-key guard on the single-pass scan* (memory-safe, baseline
+     structure, only runs full `=α=` on same-head entries): compiles
+     fine, but **zero speedup** (micro-bench 54 s vs 48–50 s baseline).
+   The guard provably eliminates almost all dedup `=α=` work yet moves
+   nothing, which proves the dedup scans are NOT the bottleneck:
+   `_=α=_` already short-circuits on head mismatch (`def f =α= def f′`
+   tests `f` first), so the scans were already cheap. The profile's
+   attribution was wrong.
+
+   **Corrected diagnosis**: the per-call cost is the per-rule
+   meta-level work — `getType`, `stripAndReduce` (a `reduce` at every
+   Pi), and especially `inferSort`'s `inferType >>= normalise` run for
+   every rule subterm in `conv` — which scales with rule count and
+   rule-type complexity. (Confirmed indirectly: dropping the
+   `inferSort` normalise made it *worse*, 79 s, since downstream work
+   then runs on un-normalised types — so that normalise is net
+   load-bearing, not removable.) A table index cannot touch this.
+   Real levers, for a future attempt: (a) memoize/skip re-processing
+   rules whose specialised forms recur (hard: macros are stateless per
+   call); (b) cut `inferSort`'s cost — obtain a subterm's sort without
+   a full `inferType >>= normalise` where the head's result type is
+   already known; (c) accept the cost and document a rule-count budget
+   (≲ 10–15 rules/call) as the supported regime.
 2. **Fuel as an option.** The 100-step budget is hard-coded in three
    places; chains needing more fail opaquely. Thread it through
    `TCOptions.fuel` (the `("reduceDec/constrs" , 5)` pattern already
