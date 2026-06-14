@@ -1432,9 +1432,9 @@ private
               nothing → return nothing
           nothing → return nothing)
 
-  simpRelGoal : ℕ → ℕ → RelInfo → List Name → List Name → ITactic
-  simpRelGoal 0          _     _  _       _        = error1 "simpRel!: goal has too many binders"
-  simpRelGoal (suc fuel) depth ri eqNames relNames = do
+  simpRelGoal : ℕ → ℕ → RelInfo → List Name → List Name → List Term → ITactic
+  simpRelGoal 0          _     _  _       _        _    = error1 "simpRel!: goal has too many binders"
+  simpRelGoal (suc fuel) depth ri eqNames relNames hyps = do
     hole ← goalHole
     ty   ← inferType hole >>= reduce
     case ty of λ where
@@ -1442,7 +1442,7 @@ private
         hole′ ← extendContext (x , argTy) (newMeta bodyTy)
         unifyStrict (hole , ty) (lam v (abs x hole′))
         extendContext (x , argTy)
-          (runWithHole hole′ (simpRelGoal fuel (suc depth) ri eqNames relNames))
+          (runWithHole hole′ (simpRelGoal fuel (suc depth) ri eqNames relNames hyps))
       _ → do
         (just (relN , prefix , lhs₀ , rhs₀)) ← return (getRelSides ty)
           where nothing → error1 "simpRel!: goal is not a binary relation"
@@ -1454,8 +1454,13 @@ private
             bM  = lastVisibleArg prefix
         -- (a) Build the engine tables + ≡-rules over BOTH sides.
         cands ← enrichCandidates eqNames (subApps lhs ++ subApps rhs)
-        (ruleTs , st₁) ← processRules cands eqNames (mkSt [] [] bM)
-        (lhsE , st₂) ← conv 0 [] st₁ lhs
+        (ruleTs , st₁)  ← processRules cands eqNames (mkSt [] [] bM)
+        -- ≡-hypotheses join the engine's ≡-rules (shifted past the
+        -- binders we entered, as in `simpH!`).
+        let hyps′ = map (mapVars (_+ depth)) hyps
+        (hypTs , st₁′) ← processHyps st₁ hyps′
+        let allRuleTs = ruleTs ++ hypTs
+        (lhsE , st₂) ← conv 0 [] st₁′ lhs
         (rhsE , st₃) ← conv 0 [] st₂ rhs
         -- Mixed universe levels are not supported for relation goals
         -- (the `Lift`/`cong lower` interaction with the subst predicates
@@ -1463,7 +1468,7 @@ private
         (nothing) ← buildLiftFlags (St.sorts st₃)
           where (just _) → error1 "simpRel!: mixed universe levels are unsupported for relation goals (use monomorphic carrier types)"
         fuelN ← stepFuel
-        let rulesT = quoteList ruleTs
+        let rulesT = quoteList allRuleTs
             g      = RC.sortOf lhsE
             fuelT  = `ℕ fuelN
         lT  ← quoteNorm lhsE
@@ -1510,10 +1515,14 @@ simpHTactic names hyps =
   local (λ env → record env { reconstruction = true }) (simpRGoal 100 0 names hyps)
 
 -- Relation goals: ≡-rules, ~-rules, the relation's trans/refl.
-simpRelTactic : List Name → List Name → RelInfo → ITactic
-simpRelTactic eqNames relNames ri =
+-- Relation goals with local ≡-hypotheses (terms).
+simpRelHTactic : List Name → List Name → List Term → RelInfo → ITactic
+simpRelHTactic eqNames relNames hyps ri =
   local (λ env → record env { reconstruction = true })
-        (simpRelGoal 100 0 ri eqNames relNames)
+        (simpRelGoal 100 0 ri eqNames relNames hyps)
+
+simpRelTactic : List Name → List Name → RelInfo → ITactic
+simpRelTactic eqNames relNames ri = simpRelHTactic eqNames relNames [] ri
 
 -- TC options the macros install: carries the `simp/steps` fuel entry so
 -- `stepFuel` reads the (default 100) rewrite-step budget.
@@ -1549,6 +1558,13 @@ macro
   simpRel! : List Name → List Name → RelInfo → Tactic
   simpRel! eqNames relNames ri =
     initTacOpts (simpRelTactic eqNames relNames ri) simpTCOptions
+
+  -- Like `simpRel!` but also takes local ≡-hypotheses (a list literal or
+  -- pair of hypothesis terms, deconstructed like `simpH!`).
+  simpRelH! : List Name → List Name → Term → RelInfo → Tactic
+  simpRelH! eqNames relNames hypsExpr ri = initTacOpts (do
+    hyps ← unquoteHyps 100 hypsExpr
+    simpRelHTactic eqNames relNames hyps ri) simpTCOptions
 
   -- Like `simpRel!`, but the ≡-rule and ~-rule name lists are resolved
   -- from `Simp` instance dictionaries `EqD` / `RelD`.

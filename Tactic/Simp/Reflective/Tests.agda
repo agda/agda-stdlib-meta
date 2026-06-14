@@ -355,6 +355,16 @@ gGD₁ xs ys = simpRelD! BagEqRules NoRules ↭-info
 gGD₂ : ∀ (xs ys : List ℕ) → xs ++ ys ↭ ys ++ xs
 gGD₂ xs ys = simpRelD! NoRules BagRelRules ↭-info
 
+-- simpRelH!: a local ≡-hypothesis feeds the ≡-engine of a relation goal.
+-- `n + 0 ≤ m` with `h : n ≡ m`: engine rewrites n+0→n (++... +-identityʳ)
+-- then n→m (via h), leaving `m ≤ m`, closed by ≤-refl.
+gGH₁ : ∀ {n m : ℕ} → n ≡ m → n + 0 ≤ m
+gGH₁ {n} {m} h = simpRelH! (quote +-identityʳ ∷ []) [] (h ∷ []) ≤-info
+
+-- two ≡-hypotheses (heterogeneous → passed as a pair) on a ≤ goal
+gGH₂ : ∀ {a b c : ℕ} → a ≡ b → c ≡ b → a + c ≤ b + b
+gGH₂ ha hc = simpRelH! [] [] (ha , hc) ≤-info
+
 -- Abstract bundle relations: `simpRel!` over an arbitrary `Monoid M`'s
 -- `_≈_`, with `_∙_`/`ε` recognised as bundle operations (their leading
 -- bundle argument `M` is dropped during reification, so `M` — at a

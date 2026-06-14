@@ -387,7 +387,10 @@ trusts the meta level; prefer features that keep that invariant.
 5. **`simpRelD!` — DONE 2026-06-12.** `simpRelD! (EqD RelD : Set) ri`
    resolves both rule lists from `Simp` instance dictionaries (mirrors
    `simpD!`).  Tests gGD₁ (Option C) / gGD₂ (Option B).
-6. **Hypotheses for relation goals.** `simpRelH!` (or extend
+6. **Hypotheses for relation goals — DONE 2026-06-12.** `simpRelH! eqs
+   ~rules hyps info` feeds local ≡-hypotheses to the relation goal's
+   engine (reuses `processHyps`; hyps shifted by binder depth). Tests
+   gGH₁/gGH₂. (~-hypotheses as chain steps still open.) WAS: `simpRelH!` (or extend
    `simpRel!`): ≡-hypotheses feed the engine like `simpH!`; a further
    step is ~-valued hypotheses as chain steps in Option B.
 7. **Mixed levels for `simpRel!`** — currently a clean error; the
