@@ -321,14 +321,38 @@ gG₁₂ xs ys = simpRel! (quote ++-identityʳ ∷ []) (quote ↭Prop.++-comm �
 gG₁₃ : ∀ {x y : ℕ} → x + y ≤ (y + x) + 0
 gG₁₃ = simpRel! (quote +-comm ∷ quote +-identityʳ ∷ []) [] ≤-info
 
--- LIMITATION (documented): relations DEFINED as functions unfold under
--- the goal's whnf — `xs ⊆ ys` (= ∀ {x} → x ∈ xs → x ∈ ys) turns into a
--- Π-type, the binder recursion descends into the membership arrow, and
--- the tactic fails on the `∈`-leaf.  Needs relation-aware unfolding
--- control (or a wrapper relation).
+-- LIMITATION (documented, root cause established 2026-06-12): relations
+-- DEFINED as functions (e.g. `_⊆_` = ∀ {x} → x ∈ xs → x ∈ ys) are not
+-- supported.  `inferType` on the goal hole returns the relation ALREADY
+-- UNFOLDED to its Π-definition, so the goal is seen as a binder to
+-- strip (descending into the membership arrow).  There is no way to
+-- recover the folded `_⊆_` from the hole type, and blocking that
+-- relation's reduction during `inferType` (via `dontReduce`) breaks
+-- `inferType`'s own elaboration (de Bruijn / level errors) on other
+-- goals.  A fix needs a different mechanism (a wrapper relation, or an
+-- as-written goal type from elsewhere).
 --   gG₁₄ : ∀ (xs : List ℕ) → xs ++ [] ⊆ xs
 --   gG₁₄ xs = simpRel! (quote ++-identityʳ ∷ []) []
 --                      (mkRelInfo (quote ⊆-trans) (quote ⊆-refl))
+
+-- simpRelD!: ≡-rule and ~-rule lists from instance dictionaries.
+data BagEqRules  : Set where    -- ≡-rules
+data BagRelRules : Set where    -- ~-rules
+data NoRules     : Set where    -- empty dictionary
+
+instance
+  ber₁ : Simp BagEqRules
+  ber₁ = mkSimp (quote ++-identityʳ)
+  brr₁ : Simp BagRelRules
+  brr₁ = mkSimp (quote ↭Prop.++-comm)
+
+-- Option C through dictionaries (≡-normalise the LHS, ↭-refl closes)
+gGD₁ : ∀ (xs ys : List ℕ) → (xs ++ []) ++ ys ↭ xs ++ ys
+gGD₁ xs ys = simpRelD! BagEqRules NoRules ↭-info
+
+-- Option B through dictionaries (a single ++-comm ~-step; no ≡-rules)
+gGD₂ : ∀ (xs ys : List ℕ) → xs ++ ys ↭ ys ++ xs
+gGD₂ xs ys = simpRelD! NoRules BagRelRules ↭-info
 
 -- LIMITATION (documented): relation goals mixing universe levels error
 -- cleanly ("simpRel!: mixed universe levels are unsupported for

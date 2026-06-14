@@ -1490,6 +1490,16 @@ macro
   simpRel! eqNames relNames ri =
     initTacOpts (simpRelTactic eqNames relNames ri) defaultTCOptions
 
+  -- Like `simpRel!`, but the ≡-rule and ~-rule name lists are resolved
+  -- from `Simp` instance dictionaries `EqD` / `RelD`.
+  simpRelD! : (EqD RelD : Set) → RelInfo → Tactic
+  simpRelD! EqD RelD ri = initTacOpts (do
+    eqTy     ← quoteTC EqD
+    relTy    ← quoteTC RelD
+    eqNames  ← getDictNames eqTy
+    relNames ← getDictNames relTy
+    simpRelTactic eqNames relNames ri) defaultTCOptions
+
 -- ** Tests
 
 private

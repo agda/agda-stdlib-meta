@@ -368,13 +368,20 @@ trusts the meta level; prefer features that keep that invariant.
 
 ### Tier 2 — Coverage completion
 
-4. **Named-relation preservation (the `⊆` fix).** Function-valued
-   relations unfold under the goal whnf before `getRelSides` sees them.
-   Concrete low-risk fix: try `getRelSides` on the UNREDUCED goal type
-   first; reduce-and-recurse only when that fails. Likely makes
-   `⊆`-style goals work with their existing refl/trans lemmas.
-5. **`simpRelD!`** — mirror `simpD!`'s dictionary resolution for the
-   relation macro's two rule lists. Trivial.
+4. **Named-relation preservation (the `⊆` fix) — ATTEMPTED, BLOCKED.**
+   The plan was to read the goal unreduced.  Root cause found instead:
+   `inferType` on the goal hole returns a function-defined relation
+   (e.g. `_⊆_`) ALREADY UNFOLDED to its Π-definition — the unreduced
+   type is the membership arrow, not `def _⊆_`.  So the goal is seen as
+   a binder to strip.  Blocking the relation's reduction during
+   `inferType` (via `dontReduce [riRel]`) DOES keep it folded but breaks
+   `inferType`'s elaboration on other goals (de Bruijn / level errors,
+   same failure class as the operator-blocking dead-end).  Needs a
+   different mechanism: a wrapper relation, or obtaining the as-written
+   goal type from a source other than `inferType`.  Deferred.
+5. **`simpRelD!` — DONE 2026-06-12.** `simpRelD! (EqD RelD : Set) ri`
+   resolves both rule lists from `Simp` instance dictionaries (mirrors
+   `simpD!`).  Tests gGD₁ (Option C) / gGD₂ (Option B).
 6. **Hypotheses for relation goals.** `simpRelH!` (or extend
    `simpRel!`): ≡-hypotheses feed the engine like `simpH!`; a further
    step is ~-valued hypotheses as chain steps in Option B.
