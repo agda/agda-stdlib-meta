@@ -432,10 +432,29 @@ trusts the meta level; prefer features that keep that invariant.
      `checkType` the elaborated application and reject any `findMetas` ≠ []
      → candidate skipped → clean "failed to close" instead of a leaked
      unsolved meta.  See NOTES pitfall on `noConstraints`/`findMetas`.
-   - LIMITATIONS: premise must have a `Class.Decidable._⁇` instance; the
-     rule fires only on ground operands present in the goal (decided at
-     macro time).  The symbolic fragment (open conditions, needing an
-     Env-threaded `csound` + a ρ₀-grounded engine) remains research.
+   - **Symbolic premises — DONE (discharge by assumption) 2026-06-14.**
+     The earlier note ("symbolic conditions need an Env-threaded `csound` +
+     ρ₀-grounded engine") was WRONG for the case that matters.  Key fact:
+     the frontend reifies engine `var`s ONLY for rule pattern-binders;
+     every *goal* term — including free context variables `m`, `n` — is a
+     var-free ATOM (`op o s []`; `convAtom` errors if an atom mentions a
+     rule var).  So a rule instantiated from goal subterms is var-free, and
+     its `sound : ∀τ` holds trivially (eval ignores τ) EVEN when the source
+     equation is conditional.  The symbolic case is then the same macro
+     mechanism as the ground case with a different discharge source: for a
+     premise `m ≤ n` over abstract `m`/`n`, `dischargeCond` scans the local
+     context (`getContext` — call-site hyps live in `globalContext`, NOT
+     `getLocalContext`) for a variable of that exact type and emits
+     `var i []`.  No engine change, `--safe` intact.  Order: by assumption,
+     then by decision (`prove`); `findMetas` guard rejects undischarged
+     premises.  Tests sk₁/sk₂.
+   - REMAINING LIMITATION (genuinely engine-shaped, rare): a conditional
+     rule fires only on operands PRESENT IN THE GOAL — a premise for a redex
+     that only materialises after other rewrites isn't discharged (the macro
+     can't pre-instantiate it).  THAT case still needs conditions threaded
+     through the engine rewrite loop (Env-threaded `csound` + ρ₀-grounding)
+     and remains research; candidate-enrichment (item 10) widens the
+     pre-instantiation pool somewhat.
 10. **Goals beyond ≡ and registered relations**: boolean goals (`T b`,
     `b ≡ true` via `decide`-style closure) — the original TODO at the
     top of old `Tactic.Simp`.

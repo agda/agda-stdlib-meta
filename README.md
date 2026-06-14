@@ -62,18 +62,29 @@ an arbitrary monoid's `≈`, via `simpRel!`), and conditional rules whose side
 conditions are decidable propositions (see below).
 
 **Conditional rules.** A rule may carry trailing side-condition premises;
-the macro instantiates the rule's value binders from ground subterms of the
-goal and discharges each premise via a `Class.Decidable._⁇` instance,
-forcing the decision to `yes`. So the *unmodified* stdlib lemma
-`m≤n⇒m⊓n≡m : m ≤ n → m ⊓ n ≡ m` rewrites `3 ⊓ 5` to `3` with no boolean
-wrapper — its `m ≤ n` premise is decided automatically (and the rule simply
-does not fire where the condition is false). Callers need the relevant `_⁇`
-instances in scope (`open import Class.Decidable`); these cover ℕ/ℤ/ℚ
+the macro instantiates the rule's value binders from subterms of the goal
+and discharges each premise two ways:
+
+- *by assumption* — a context variable of exactly the premise type. So the
+  *unmodified* stdlib `m≤n⇒m⊓n≡m : m ≤ n → m ⊓ n ≡ m` rewrites `m ⊓ n` to
+  `m` under a goal `∀ {m n} → m ≤ n → … (m ⊓ n) …`, with `m`/`n` **abstract**
+  — the `m ≤ n` premise is taken from the goal's own binder.
+- *by decision* — failing an assumption, the premise is decided via a
+  `Class.Decidable._⁇` instance, forcing the decision to `yes`. So the same
+  lemma also rewrites a ground `3 ⊓ 5` to `3` (here `3 ≤ 5` is decided).
+
+The rule simply does not fire where the premise can be neither assumed nor
+decided. The emitted engine rule is always var-free (its operands are goal
+atoms), so its soundness obligation stays unconditional even when the source
+equation is conditional. For the decision path, callers need the relevant
+`_⁇` instances in scope (`open import Class.Decidable`); these cover ℕ/ℤ/ℚ
 `_≤_`/`_<_` and any `_≡_` over a `DecEq` type, and are user-extensible.
 
 **Current limitations.** Relations defined as plain functions (e.g. `_⊆_`,
-which `inferType` unfolds to its Π-definition) are not yet supported, and a
-conditional rule's premise must have a `Class.Decidable._⁇` instance.
+which `inferType` unfolds to its Π-definition) are not yet supported. A
+conditional rule fires only on operands **present in the goal** (the premise
+is dispatched at macro time): a side condition for a redex that only
+materialises *after* other rewrites is not discharged.
 
 See [`reflective-simp-plan.md`](reflective-simp-plan.md) for the roadmap,
 the migration matrix against the older `Tactic.Simp`, and benchmark numbers;

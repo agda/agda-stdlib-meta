@@ -499,17 +499,17 @@ gJ₄ = simp! []
 -- K. Conditional rules
 ----------------------------------------------------------------
 -- A rule may carry side conditions as trailing premises.  simp!
--- instantiates its value binders from ground goal candidates and
--- discharges each premise via `prove`: Agda resolves a
--- `Class.Decidable._⁇` instance for the proposition and forces the
--- decision to `yes`.  A *raw* propositional premise (e.g. `m ≤ n`)
--- therefore needs no `T`-wrapper.  The rule fires only where the
--- condition actually holds on the concrete operands.
+-- instantiates its value binders from goal candidates and discharges
+-- each premise: first BY ASSUMPTION (a context variable of exactly the
+-- premise type), then BY DECISION (`prove`: resolve a
+-- `Class.Decidable._⁇` instance and force the decision to `yes`).  A
+-- *raw* propositional premise (e.g. `m ≤ n`) therefore needs no
+-- `T`-wrapper.
 
--- condition holds (3 ≤ 5): fires.  `m≤n⇒m⊓n≡m : m ≤ n → m ⊓ n ≡ m` is
--- the *unmodified* stdlib lemma — its `m ≤ n` premise is decided and
--- discharged automatically (`_≤_` over ℕ has a `Class.Decidable._⁇`
--- instance), with no boolean wrapper.
+-- K.1 ground (by decision).  condition holds (3 ≤ 5): fires.
+-- `m≤n⇒m⊓n≡m : m ≤ n → m ⊓ n ≡ m` is the *unmodified* stdlib lemma —
+-- its `m ≤ n` premise is decided automatically (`_≤_` over ℕ has a
+-- `Class.Decidable._⁇` instance), with no boolean wrapper.
 ck₁ : 3 ⊓ 5 ≡ 3
 ck₁ = simp! (quote m≤n⇒m⊓n≡m ∷ [])
 
@@ -517,10 +517,22 @@ ck₁ = simp! (quote m≤n⇒m⊓n≡m ∷ [])
 ck₂ : (3 ⊓ 5) + 0 ≡ 3
 ck₂ = simp! (quote m≤n⇒m⊓n≡m ∷ quote +-identityʳ ∷ [])
 
--- The premise proposition must have a `Class.Decidable._⁇` instance
--- (ℕ/ℤ/ℚ `_≤_`/`_<_`, any `_≡_` over a `DecEq` type, …), and the rule
--- fires only on ground operands present in the goal (the condition is
--- decided at macro time).  When the condition is FALSE the rule does
--- not fire and the goal fails cleanly, e.g.
---   bad : 5 ⊓ 3 ≡ 5
---   bad = simp! (quote m≤n⇒m⊓n≡m ∷ [])   -- 5 ≤ 3 false → "failed to close"
+-- K.2 symbolic (by assumption).  `m`/`n` are abstract, so the premise
+-- `m ≤ n` is NOT decidable; it is discharged from the goal's own `m ≤ n`
+-- binder.  The emitted engine rule is still var-free (its operands `m`,
+-- `n` are atoms), so its soundness obligation stays unconditional.
+sk₁ : ∀ {m n : ℕ} → m ≤ n → (m ⊓ n) ≡ m
+sk₁ _ = simp! (quote m≤n⇒m⊓n≡m ∷ [])
+
+-- symbolic conditional chained with an ordinary rule
+sk₂ : ∀ {m n : ℕ} → m ≤ n → (m ⊓ n) + 0 ≡ m
+sk₂ _ = simp! (quote m≤n⇒m⊓n≡m ∷ quote +-identityʳ ∷ [])
+
+-- A premise with neither a usable assumption nor a `_⁇` instance does
+-- not fire, and the rule fires only on operands present in the goal
+-- (the condition is dispatched at macro time).  A false ground condition
+-- or an abstract premise with no assumption fails cleanly, e.g.
+--   bad₁ : 5 ⊓ 3 ≡ 5
+--   bad₁ = simp! (quote m≤n⇒m⊓n≡m ∷ [])         -- 5 ≤ 3 false → "failed to close"
+--   bad₂ : ∀ {m n : ℕ} → (m ⊓ n) ≡ m
+--   bad₂ = simp! (quote m≤n⇒m⊓n≡m ∷ [])         -- no m ≤ n in scope → "failed to close"

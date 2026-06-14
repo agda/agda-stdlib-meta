@@ -876,29 +876,60 @@ private
       go i 0       = 0
       go i (suc k) = if mentionsVar i body then 0 else suc (go (suc i) k)
 
+  -- Discharge a single side condition of type `dom`.  First try to close
+  -- it *by assumption*: scan the local context for a variable of exactly
+  -- that type, returning `var i []` for the first match.  This handles
+  -- SYMBOLIC conditions — a goal `∀ {m n} → m ≤ n → … (m ⊓ n) …` discharges
+  -- the `m ≤ n` premise from its own binder, with `m`/`n` abstract (the
+  -- emitted rule is var-free in the engine sense — its operands are atoms —
+  -- so its `sound` obligation is unconditional even though the equation is
+  -- not).  If no assumption fits, fall back to `prove` (decide it via a
+  -- `Class.Decidable._⁇` instance, e.g. a ground `3 ≤ 5`).  An undischarged
+  -- premise leaves a meta that the caller's `findMetas` guard rejects.
+  dischargeCond : Term → TC Term
+  dischargeCond dom = do
+    -- `getContext` (local binders the macro entered ++ the call-site
+    -- context) is what `var i` indexes; the call-site hypotheses live in
+    -- the latter, so `getLocalContext` alone would miss them.
+    ctx ← getContext
+    go (length ctx) 0
+    where
+      go : ℕ → ℕ → TC Term
+      go zero    _ = return (def (quote prove) [])
+      go (suc k) i =
+        catch (checkType (var i []) dom >> return (var i []))
+              (λ _ → go k (suc i))
+
+  -- Build the full argument list for a conditional rule: the instantiated
+  -- value args followed by a discharge for each side condition.  Re-infer
+  -- the partial application after every discharge so each premise's type is
+  -- computed in the context of the previous ones (correct for >1 premise).
+  buildCondArgs : Name → Args Term → List ArgInfo → TC (Args Term)
+  buildCondArgs n acc []       = return acc
+  buildCondArgs n acc (i ∷ is) = do
+    (pi (arg _ dom) _) ← inferType (def n acc) >>= reduce
+      where _ → error1 "simp!: expected a conditional premise"
+    d ← dischargeCond dom
+    buildCondArgs n (acc ++ (arg i d ∷ [])) is
+
   -- Discharge one conditional-rule assignment: apply the lemma to the
-  -- instantiated value args and `prove` for each condition, yielding a
-  -- ground unconditional equation.  Agda discharges each premise `P` by
-  -- resolving a `Class.Decidable._⁇` instance and forcing the decision to
-  -- `yes` (see `prove`).  If a condition is false, or its proposition has
-  -- no decidability instance, the application is ill-typed → skip this
-  -- candidate (the rule simply does not fire there).
+  -- instantiated value args and a discharge for each side condition
+  -- (`dischargeCond`: by assumption, else by decision), yielding an
+  -- unconditional equation over goal atoms.  Then demand that no
+  -- metavariables survive elaboration — an undischarged premise leaves an
+  -- unsolved meta (e.g. `prove`'s `True (dec …) = ⊥` for a false ground
+  -- condition, or a stuck decision for an abstract one with no assumption).
+  -- Rejecting any leftover meta skips the candidate (the rule does not fire
+  -- there) instead of leaking the meta into the emitted proof.
   processCondAssign : List Name → Name → List ArgInfo → List ArgInfo → St
                     → List Term → TC (Maybe Term × St)
   processCondAssign gh n valInfos condInfos st vals =
-    let pre = Data.List.zipWith arg valInfos vals
-            ++ map (λ i → arg i (def (quote prove) [])) condInfos in
     catch (do
+      pre ← buildCondArgs n (Data.List.zipWith arg valInfos vals) condInfos
       specTy ← inferType (def n pre)
-      -- Elaborate the application and demand that no metavariables survive.
-      -- Each `prove` leaves a `True (dec …)` argument: when the condition
-      -- holds it is `⊤` (eta-solved away); when it is false it is `⊥`, which
-      -- cannot be solved and remains as an unsolved meta.  Rejecting any
-      -- leftover meta here skips the candidate (the rule does not fire)
-      -- instead of leaking the meta into the emitted proof.
       elab ← checkType (def n pre) specTy
       case findMetas elab of λ where
-        (_ ∷ _) → error1 "simp!: side condition not decided"
+        (_ ∷ _) → error1 "simp!: side condition not discharged"
         []      → do
           (body , tel) ← stripAndReduce 100 specTy
           (r , st′) ← processRuleMono gh (hName n) pre tel body st

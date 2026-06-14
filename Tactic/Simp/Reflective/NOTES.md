@@ -141,3 +141,17 @@ these four rules before touching anything else.
     skips the rule (→ "failed to close the goal") rather than leaking it.
     `inferType` alone is insufficient — it returns the result type without
     forcing the term's metas.
+
+14. **`getLocalContext` is empty at a macro's call site — use `getContext`
+    to reach the caller's hypotheses** — `initTCEnvWithGoal` seeds
+    `globalContext` from the real `R.getContext` (the call-site telescope:
+    the user's in-scope variables and hypotheses) and starts `localContext`
+    `[]`.  `extendContext` only grows `localContext`, so it holds just the
+    binders the *macro itself* entered (e.g. ∀-binders stripped off the
+    goal).  To discharge a side condition "by assumption" you must scan
+    `getContext` (= `localContext ++ globalContext`), which is exactly the
+    space `var i` indexes (`var 0` = head = innermost binder).  Scanning
+    `getLocalContext` finds nothing for a goal like `∀ {m n} → m ≤ n → …`
+    proved by `λ h → simp! …` (there `h` is a *call-site* var, in
+    `globalContext`).  Probe with `checkType (var i []) premiseTy` per index
+    and take the first that does not throw.
