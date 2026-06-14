@@ -443,6 +443,41 @@ lenMapSuc l = simp! (quote length-map ∷ [])
 gI₂ : ∀ (l : List ℕ) → length (map (λ x → suc x) l) ≡ length l
 gI₂ l = simp! (quote lenMapSuc ∷ [])
 
+----------------------------------------------------------------
+-- J. `simp?` diagnostics
+--
+-- `simp?` reports (via a type error) which of the supplied rules
+-- actually fired, as a ready-to-paste `simp!` call.  Being a fatal
+-- diagnostic it cannot itself appear in a green definition, so each
+-- entry pairs the verified `simp?` output (as a comment) with the
+-- `simp!` call it suggests — checked live below, proving the suggestion
+-- is correct and minimal.
+----------------------------------------------------------------
+
+-- Subset fires.  `simp? (quote +-identityʳ ∷ quote *-identityʳ ∷
+-- quote *-zeroʳ ∷ quote +-identityˡ ∷ [])` on this goal reports:
+--   simp! (*-identityʳ ∷ +-identityˡ ∷ [])
+-- (note: original user order preserved; +-identityʳ and *-zeroʳ dropped)
+gJ₁ : ∀ {x y : ℕ} → (x * 1) + (0 + y) ≡ x + y
+gJ₁ = simp! (quote *-identityʳ ∷ quote +-identityˡ ∷ [])
+
+-- All fire.  `simp? (quote *-identityʳ ∷ quote +-identityˡ ∷ [])`
+-- reports:  simp! (*-identityʳ ∷ +-identityˡ ∷ [])
+gJ₂ : ∀ {x y : ℕ} → (x * 1) + (0 + y) ≡ x + y
+gJ₂ = simp! (quote *-identityʳ ∷ quote +-identityˡ ∷ [])
+
+-- Polymorphic rule expanding to several engine rules is reported once
+-- by its SOURCE name.  `simp? (quote +-identityʳ ∷ quote ++-identityʳ
+-- ∷ [])` on this goal reports:  simp! (++-identityʳ ∷ [])
+gJ₃ : ∀ (xs : List ℕ) → length (map suc (xs ++ [])) ≡ length (map suc xs)
+gJ₃ xs = simp! (quote ++-identityʳ ∷ [])
+
+-- No rules fire (definitional goal).  `simp? (quote +-identityʳ ∷ [])`
+-- reports:  "no rules fired — the goal is closed definitionally; use
+-- `simp! []`."
+gJ₄ : ∀ {x : ℕ} → x ≡ x
+gJ₄ = simp! []
+
 -- LIMITATION (documented): conditional rules (hypothesis arrows in the
 -- rule type) are not supported; `stripAndReduce` treats the hypothesis
 -- as a pattern binder and the rule is rejected or never fires.  This

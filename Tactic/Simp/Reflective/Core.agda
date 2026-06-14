@@ -501,6 +501,112 @@ module Eval {ℓ} (Ts : List (Pointed ℓ)) (ops : List (WithSorts.Op Ts)) where
              → evalAt g ρ₀ e ≡ evalAt g ρ₀ (normalForm n rs e)
   simplifyEq g n rs e = proj₂ (simplify n (prioritize rs) e) g ρ₀
 
+  ----------------------------------------------------------------
+  -- Rule-usage diagnostics (for `simp?`).  This re-runs the SAME
+  -- control flow as `simplify`/`rewrite₁`/`tryRules`/`tryRule` but,
+  -- instead of building proofs, accumulates the engine indices of the
+  -- rules that actually fired (and, for permutative rules, passed the
+  -- `ltExpr` gate).  Pure first-order data only — no proof obligations,
+  -- so it does not touch the verified engine and keeps `--safe`.
+  --
+  -- Rules are paired with their ORIGINAL engine index (before
+  -- `prioritize` reorders them); the indices returned are these
+  -- original positions, so the frontend can map them back to source
+  -- names regardless of the `prioritize` shuffle.
+  ----------------------------------------------------------------
+
+  IRule : Set ℓ
+  IRule = ℕ × Rule
+
+  IRules : Set ℓ
+  IRules = List IRule
+
+  -- Attach each rule's position in the original list as its index.
+  enumRules : Rules → IRules
+  enumRules = go 0
+    where
+      go : ℕ → Rules → IRules
+      go _ []       = []
+      go i (r ∷ rs) = (i , r) ∷ go (suc i) rs
+
+  -- `prioritize`, lifted to indexed rules (same reordering; the carried
+  -- index travels with each rule, so the original positions survive).
+  prioritizeI : IRules → IRules
+  prioritizeI rs = nonPerm rs ++ʳ permOnly rs
+    where
+      _++ʳ_ : IRules → IRules → IRules
+      []       ++ʳ ys = ys
+      (x ∷ xs) ++ʳ ys = x ∷ (xs ++ʳ ys)
+
+      nonPerm : IRules → IRules
+      nonPerm [] = []
+      nonPerm (ir ∷ rs) with Rule.perm (proj₂ ir)
+      ... | false = ir ∷ nonPerm rs
+      ... | true  = nonPerm rs
+
+      permOnly : IRules → IRules
+      permOnly [] = []
+      permOnly (ir ∷ rs) with Rule.perm (proj₂ ir)
+      ... | true  = ir ∷ permOnly rs
+      ... | false = permOnly rs
+
+  -- Detection twin of `tryRule`: on a successful (and gated) match it
+  -- returns the rule's original index together with the rewritten
+  -- expression, mirroring `tryRule`/`mkStep` exactly (it uses the same
+  -- `applyS … rhs` as the result so the rewrite chain coincides).
+  tryRuleU : IRule → Expr → Maybe (ℕ × Expr)
+  tryRuleU (i , r) e with match (Rule.lhs r) e []
+  ... | nothing = nothing
+  ... | just σ with eqExpr? (applyS σ (Rule.lhs r)) e
+  ...   | nothing = nothing
+  ...   | just _ with Rule.perm r
+  ...     | false = just (i , applyS σ (Rule.rhs r))
+  ...     | true  with ltExpr (applyS σ (Rule.rhs r)) e
+  ...       | true  = just (i , applyS σ (Rule.rhs r))
+  ...       | false = nothing
+
+  tryRulesU : IRules → Expr → Maybe (ℕ × Expr)
+  tryRulesU []        e = nothing
+  tryRulesU (ir ∷ rs) e with tryRuleU ir e
+  ... | just s  = just s
+  ... | nothing = tryRulesU rs e
+
+  mutual
+    rewrite₁U : IRules → Expr → Maybe (ℕ × Expr)
+    rewrite₁U rs e with tryRulesU rs e
+    ... | just s  = just s
+    ... | nothing = rewriteSubU rs e
+
+    rewriteSubU : IRules → Expr → Maybe (ℕ × Expr)
+    rewriteSubU rs (var i s)   = nothing
+    rewriteSubU rs (op o s es) with rewrites₁U rs es
+    ... | nothing        = nothing
+    ... | just (i , es′) = just (i , op o s es′)
+
+    rewrites₁U : IRules → List Expr → Maybe (ℕ × List Expr)
+    rewrites₁U rs []       = nothing
+    rewrites₁U rs (e ∷ es) with rewrite₁U rs e
+    ... | just (i , e′) = just (i , e′ ∷ es)
+    ... | nothing with rewrites₁U rs es
+    ...   | just (i , es′) = just (i , e ∷ es′)
+    ...   | nothing        = nothing
+
+  -- Mirror of `simplify`, threading the set of fired indices.  `acc`
+  -- holds the indices seen so far (in reverse-discovery order); the
+  -- frontend deduplicates and reorders for display.
+  simplifyU : ℕ → IRules → Expr → List ℕ → List ℕ
+  simplifyU zero    rs e acc = acc
+  simplifyU (suc n) rs e acc with rewrite₁U rs e
+  ... | nothing       = acc
+  ... | just (i , e′) = simplifyU n rs e′ (i ∷ acc)
+
+  -- The fired-index list for solving `l ≡ r`, mirroring `solve`:
+  -- `prioritize` once, then simplify both sides with the same fuel.
+  usedRules : ℕ → Rules → (l r : Expr) → List ℕ
+  usedRules n rs₀ l r =
+    let irs = prioritizeI (enumRules rs₀)
+    in simplifyU n irs r (simplifyU n irs l [])
+
 ----------------------------------------------------------------
 -- Maybe extraction that forces the solver at type-checking time.
 ----------------------------------------------------------------

@@ -877,6 +877,19 @@ private
     (rs₂ , st₂) ← processRules cands ns st₁
     return (rs₁ ++ rs₂ , st₂)
 
+  -- Like `processRules`, but also returns the SOURCE name responsible
+  -- for each emitted engine rule, in the same order.  A polymorphic
+  -- rule expands to several engine rules (one per instantiation) — each
+  -- of them is tagged with the same source `Name`, so the engine
+  -- index → source-name map is just this list indexed positionally.
+  processRulesN : List Term → List Name → St → TC (List Term × List Name × St)
+  processRulesN cands []       st = return ([] , [] , st)
+  processRulesN cands (n ∷ ns) st = do
+    (rs₁ , st₁)       ← processRule cands st n
+    (rs₂ , ns₂ , st₂) ← processRulesN cands ns st₁
+    -- one copy of `n` per engine rule it produced
+    return (rs₁ ++ rs₂ , map (λ _ → n) rs₁ ++ ns₂ , st₂)
+
   -- A local hypothesis `h` (already shifted into the goal-leaf
   -- context) becomes a rule with head `hTerm h`.  Unlike named rules
   -- there is no Name to instantiate, so polymorphic-parameter binders
@@ -1318,6 +1331,97 @@ private
         let flags = map (λ l → not (l =α= ℓmax)) levels′
         return (just (ℓmax , flags))
 
+  ----------------------------------------------------------------
+  -- `simp?`: diagnostic reporting which of the supplied rules fired.
+  ----------------------------------------------------------------
+
+  -- Index into a list of names (the positional engine-index → source-name
+  -- map built alongside rule processing).
+  nameAt : List Name → ℕ → Maybe Name
+  nameAt []       _       = nothing
+  nameAt (n ∷ _)  zero    = just n
+  nameAt (_ ∷ ns) (suc i) = nameAt ns i
+
+  nameElem : Name → List Name → Bool
+  nameElem n []       = false
+  nameElem n (m ∷ ms) = (n == m) ∨ nameElem n ms
+
+  -- The set of SOURCE names that fired, given the engine indices the
+  -- diagnostic returned and the positional index→name map.
+  firedNames : List ℕ → List Name → List Name
+  firedNames []       _   = []
+  firedNames (i ∷ is) map = case nameAt map i of λ where
+    (just n) → n ∷ firedNames is map
+    nothing  → firedNames is map
+
+  -- Keep the user's original rule order, dropping names that never
+  -- fired and de-duplicating: walk `names`, keeping each one that is in
+  -- `fired` and not already kept.
+  keepFired : List Name → List Name → List Name
+  keepFired []       _     = []
+  keepFired (n ∷ ns) fired =
+    if nameElem n fired
+      then n ∷ keepFired ns (filterOut n fired)
+      else keepFired ns fired
+    where
+      -- Remove every occurrence of `n` from a name list (so a repeated
+      -- entry in `names` is not emitted twice).
+      filterOut : Name → List Name → List Name
+      filterOut x []       = []
+      filterOut x (m ∷ ms) = if x == m then filterOut x ms else m ∷ filterOut x ms
+
+  -- Build the report ErrorParts for a `simp?` result.
+  reportUsed : List Name → List ErrorPart
+  reportUsed []       =
+    strErr "simp? : no rules fired — the goal is closed definitionally; use `simp! []`." ∷ []
+  reportUsed used =
+    strErr "simp? : the following rules fired; replace `simp?` with"
+    ∷ strErr "\n    simp! (" ∷ go used
+    where
+      go : List Name → List ErrorPart
+      go []       = strErr "[])" ∷ []
+      go (n ∷ ns) = toErrorPart n ∷ strErr " ∷ " ∷ go ns
+
+  simpQGoal : ℕ → ℕ → List Name → ITactic
+  simpQGoal 0          _     _     = error1 "simp?: goal has too many binders"
+  simpQGoal (suc fuel) depth names = do
+    hole ← goalHole
+    ty   ← inferType hole >>= reduce
+    case ty of λ where
+      (pi argTy@(arg (arg-info v _) _) (abs x bodyTy)) → do
+        hole′ ← extendContext (x , argTy) (newMeta bodyTy)
+        unifyStrict (hole , ty) (lam v (abs x hole′))
+        extendContext (x , argTy)
+          (runWithHole hole′ (simpQGoal fuel (suc depth) names))
+      (def (quote _≡_) (hArg _ ∷ hArg _ ∷ vArg lhs₀ ∷ vArg rhs₀ ∷ [])) → do
+        let lhs = canonNums lhs₀
+            rhs = canonNums rhs₀
+        cands ← enrichCandidates names (subApps lhs ++ subApps rhs)
+        -- Track the source name responsible for each engine rule.
+        (ruleTs , ruleNames , st₀) ← processRulesN cands names (mkSt [] [] nothing)
+        (lhsE , st₁) ← conv 0 [] st₀ lhs
+        (rhsE , st₂) ← conv 0 [] st₁ rhs
+        lT  ← quoteNorm lhsE
+        rT  ← quoteNorm rhsE
+        fuelN ← stepFuel
+        -- The diagnostic operates on PLAIN expressions/rules — no proof
+        -- term is produced — so the mixed-level lifting machinery is
+        -- irrelevant here; we use the unlifted tables (sorts are only
+        -- used as opaque indices by `usedRules`).
+        TsT ← quoteSorts (St.sorts st₂)
+        let opsT   = quoteOps (St.ops st₂)
+            rulesT = quoteList ruleTs
+            fuelT  = `ℕ fuelN
+            usedApp = def (quote RC.Eval.usedRules)
+              ( vArg TsT ∷ vArg opsT
+              ∷ vArg fuelT ∷ vArg rulesT ∷ vArg lT ∷ vArg rT ∷ [] )
+        -- Plain `List ℕ` data: bounded, safe to normalise + read back.
+        usedT ← normalise usedApp
+        idxs  ← unquoteTC {A = List ℕ} usedT
+        let used = keepFired names (firedNames idxs ruleNames)
+        error (reportUsed used)
+      _ → error1 "simp?: goal is not a propositional equality"
+
   simpRGoal : ℕ → ℕ → List Name → List Term → ITactic
   simpRGoal 0          _     _     _    = error1 "simp!: goal has too many binders"
   simpRGoal (suc fuel) depth names hyps = do
@@ -1518,6 +1622,13 @@ simpRTactic names =
   -- reflected terms, breaking sort inference and table keys.
   local (λ env → record env { reconstruction = true }) (simpRGoal 100 0 names [])
 
+-- Diagnostic counterpart of `simpRTactic`: reports which rules fired
+-- instead of closing the goal.  Goes through the same reconstruction
+-- wrapper so sort inference / table keys behave identically.
+simpQTactic : List Name → ITactic
+simpQTactic names =
+  local (λ env → record env { reconstruction = true }) (simpQGoal 100 0 names)
+
 -- Like `simpRTactic` but also takes local-hypothesis terms (in the
 -- call-site context) to use as ground/∀-carrier rules.
 simpHTactic : List Name → List Term → ITactic
@@ -1542,6 +1653,14 @@ simpTCOptions = record defaultTCOptions { fuel = (simpStepsKey , defaultSteps) �
 macro
   simp! : List Name → Tactic
   simp! names = initTacOpts (simpRTactic names) simpTCOptions
+
+  -- Diagnostic: run the engine over the goal with the supplied rules and
+  -- report (via a type error) the subset that actually fired, as a
+  -- ready-to-paste `simp!` call — the analogue of Lean's `simp?`.  It
+  -- never closes the goal (Agda macros have no reliable non-fatal info
+  -- channel), so the suggestion is always surfaced.
+  simp? : List Name → Tactic
+  simp? names = initTacOpts (simpQTactic names) simpTCOptions
 
   -- Resolve the rule names from the `Simp D` instances, then run the
   -- ordinary machinery.
