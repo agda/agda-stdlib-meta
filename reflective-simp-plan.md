@@ -496,3 +496,46 @@ Strategic note: items 1 & 2 (and possibly 5) are SHARED infra that
 ideally lands once in `Reflection/Utils/` for both tactics rather than
 being copied — a cross-branch consolidation to coordinate when these
 branches merge.
+
+## Rebase onto ring-solver + reuse assessment (2026-06-12)
+
+The `simp` branch was rebased onto `worktree-ring-solver` (clean — file
+sets disjoint; backup ref `simp-backup-pre-rebase`).  The shared
+`Reflection.Utils.{Reduction,Records,AtomStore,Goal}` infra is now
+available.  Suite stays green; one consolidation done (hide the
+ring-solver's `Reflection.Utils.Core.headName`, which peels λ but is not
+con-aware, in favour of the simp's con-aware local one).
+
+Reuse boundaries, established by direct probes (correcting the
+exploration agent's over-claim):
+
+- **`⊆` / concrete function-defined relations: NOT fixable by the
+  `Reduction` infra.** Probe: `inferType hole` on `xs ++ [] ⊆ xs`
+  returns the relation ALREADY UNFOLDED to its membership Π
+  (`Π (_ : _∈_ … ) (_∈_ …)`).  `whnfBlocking` operates on a term you
+  already hold; it cannot refold what `inferType` discarded upstream.
+  So `⊆` stays a documented limitation.
+- **Abstract bundle relations (monoid `≈`): recognition IS feasible**
+  (probe: `inferType` keeps `Monoid._≈_ {..} M l r`, `Monoid._∙_ {..}
+  M x ε`, `Monoid.ε {..} M` folded as stuck projections — `M` a
+  module-parameter var).  BUT `simpRel!` still errors "mixed universe
+  levels": my reifier treats `Monoid._∙_ M x ε` as a 3-ary op with `M`
+  (type `Monoid c ℓ`, level `suc (c ⊔ ℓ)`) as an operand-atom, clashing
+  with `Carrier M` (level `c`).  Fix = the ring solver's `opDrop`:
+  recognise that the leading explicit arg is the goal's bundle `M` and
+  drop it, reifying `_∙_`/`ε` as carrier ops with `M` baked in (like a
+  hidden arg).  Concrete plan: extract `M` from the relation
+  (`getRelSides` prefix), thread it through `conv`, and in
+  `convApp`/`convAtom` drop a leading visible arg α-equal to `M`.  This
+  is a real feature (touches the delicate de-Bruijn reification path),
+  not a drop-in reuse — it is the remaining work to subsume the
+  monoid-`≈` family and thus unblock deprecating the lossy `Tactic.Simp`.
+- **`AtomStore` (two-key dedup), `Goal.underPis`**: not clean drop-ins.
+  My atoms live in the op table (deduped by `findOpByImpl`/`=α=`), not a
+  separate store; `underPis` is return-based whereas my binder loops are
+  hole/`unifyWithGoal`-based.  Adopting either is a representation/
+  architecture change, deferred.
+
+Net: the rebase is the valuable foundation (shared infra + branch
+alignment).  The highest-value next step is the `opDrop`-via-`M`
+feature for monoid-`≈`.
