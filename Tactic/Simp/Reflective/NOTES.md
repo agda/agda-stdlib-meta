@@ -124,3 +124,20 @@ these four rules before touching anything else.
     pretty-printing of a ~100-node deep-embedding normal form via
     meta-level `normalise` takes minutes (no sharing).  Bound the size
     first and summarize when large.
+
+13. **`noConstraints` is a no-op in this framework; use `findMetas` to
+    detect undischarged side conditions** — the conditional-rule discharge
+    emits `prove : ⦃ P ⁇ ⦄ {True (dec …)} → P` for each premise.  When the
+    condition is FALSE the `True (dec …)` argument has type `⊥`; Agda does
+    not error there — it POSTPONES the unsolved meta, which then leaks into
+    the macro's emitted proof and surfaces as a confusing top-level
+    "Unsolved metavariables".  The framework's `Class.MonadTC.noConstraints`
+    does NOT help: it only sets an unread `TCEnv.noConstraints` flag (the
+    `MonadTC-TC`/`-TCI` instances call the raw `R.checkType` primitive and
+    never wrap it in the primitive `R.noConstraints`).  The working pattern:
+    `checkType` the elaborated application, then reject any candidate whose
+    result has `findMetas ≢ []` (re-exported by `Reflection.Utils`).  An
+    unsolvable `⊥`-meta stays a `meta` node in that term, so this cleanly
+    skips the rule (→ "failed to close the goal") rather than leaking it.
+    `inferType` alone is insufficient — it returns the result type without
+    forcing the term's metas.

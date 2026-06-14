@@ -407,26 +407,35 @@ trusts the meta level; prefer features that keep that invariant.
 
 ### Tier 3 — Power features
 
-9. **Conditional rules — DONE (ground/T-form) 2026-06-12.** The Phase-3
-   "proof-free `Subst → Bool` gate" (9a) turned out INFEASIBLE: an engine
-   `Rule.sound` is unconditional, so a genuinely-conditional equation
-   can't be represented that way (a gate can't supply `sound`).  Sound
-   path instead = **macro-time discharge**: a rule `∀ <vals> → T (cond)
-   → lhs ≡ rhs` has its value binders instantiated from ground goal
-   candidates (reusing `findAssignments`), the trailing `T`-condition
-   discharged by `tt` (Agda checks `tt : T true`), and the resulting
-   UNCONDITIONAL equation emitted as an engine rule — no engine change,
-   `--safe` intact.  Conditions detected as trailing binders unused in
-   the body (`condCount`).  Tests ck₁/ck₂; false conditions don't fire
-   (clean failure).  LIMITATIONS: condition must be `T (bool)` form (not
-   arbitrary `Prop`); fires only on ground operands in the goal.  The
-   symbolic fragment (open conditions, needing an Env-threaded `csound`
-   + a ρ₀-grounded engine) remains research.  WAS, per the Phase-3 analysis: first a
-   proof-free `Subst → Bool` gate (reuses the `perm` plumbing; safe by
-   construction) for ground-literal decidable side conditions; then the
-   symbolic fragment via an Env-threaded `csound` field plus one new
-   Core substitution lemma. The second half is the only genuinely
-   research-shaped item left.
+9. **Conditional rules — DONE (decidable-Prop premises) 2026-06-14.** The
+   Phase-3 "proof-free `Subst → Bool` gate" (9a) turned out INFEASIBLE: an
+   engine `Rule.sound` is unconditional, so a genuinely-conditional equation
+   can't be represented that way (a gate can't supply `sound`).  Sound path
+   instead = **macro-time discharge**: a rule `∀ <vals> → <premise> → lhs ≡
+   rhs` has its value binders instantiated from ground goal candidates
+   (reusing `findAssignments`), each trailing premise discharged, and the
+   resulting UNCONDITIONAL equation emitted as an engine rule — no engine
+   change, `--safe` intact.  Conditions detected as trailing binders unused
+   in the body (`condCount`).
+   - **Discharge = `Class.Decidable` instance resolution** (option B, the
+     user's choice over a builtin-decider registry).  The macro emits a
+     top-level helper `prove : ⦃ P ⁇ ⦄ {True (dec …)} → P` for each premise;
+     Agda infers the proposition `P` from the lemma's premise type, resolves
+     a `Class.Decidable._⁇` instance (ℕ/ℤ/ℚ `_≤_`/`_<_`, any `_≡_` over a
+     `DecEq` type; user-extensible), and the `True (dec …)` argument forces
+     the decision to `yes`.  A **raw** propositional premise such as `m ≤ n`
+     is therefore discharged with NO `T`-wrapper — the unmodified stdlib
+     `m≤n⇒m⊓n≡m` works directly.  Tests ck₁/ck₂.
+   - **False conditions** leave `prove`'s `True (dec …) = ⊥` as an UNSOLVED
+     meta (Agda postpones rather than erroring; the framework's
+     `noConstraints` only sets an unread `TCEnv` flag — a no-op).  The fix:
+     `checkType` the elaborated application and reject any `findMetas` ≠ []
+     → candidate skipped → clean "failed to close" instead of a leaked
+     unsolved meta.  See NOTES pitfall on `noConstraints`/`findMetas`.
+   - LIMITATIONS: premise must have a `Class.Decidable._⁇` instance; the
+     rule fires only on ground operands present in the goal (decided at
+     macro time).  The symbolic fragment (open conditions, needing an
+     Env-threaded `csound` + a ρ₀-grounded engine) remains research.
 10. **Goals beyond ≡ and registered relations**: boolean goals (`T b`,
     `b ≡ true` via `decide`-style closure) — the original TODO at the
     top of old `Tactic.Simp`.

@@ -42,6 +42,7 @@
 module Tactic.Simp.Reflective where
 
 open import Class.DecEq
+open import Class.Decidable using (_⁇)
 open import Class.Functor
 open import Class.MonadReader.Instances
 open import Class.MonadTC.Instances
@@ -59,6 +60,7 @@ open import Data.Product hiding (map; zip)
 open import Function
 
 open import Relation.Binary.PropositionalEquality
+open import Relation.Nullary.Decidable using (toWitness; True)
 
 open import Meta.Init
 open import Meta.Prelude
@@ -94,6 +96,19 @@ record Simp (D : Set) : Set where
 record RelInfo : Set where
   constructor mkRelInfo
   field relTrans relRefl : Name
+
+-- Discharge term for the side-conditions of a conditional rule.  For a
+-- premise of type `P`, the macro emits `prove` (everything implicit): Agda
+-- infers `P` from the lemma's premise type, resolves a `Class.Decidable._⁇`
+-- instance — e.g. `_≤_`, `_<_` (ℕ/ℤ/ℚ) or any `_≡_` over a `DecEq` type —
+-- and the `True (dec …)` argument forces the decision to compute to `yes`,
+-- i.e. the side-condition must actually hold (otherwise the application is
+-- ill-typed and the rule simply does not fire there).  This is what lets a
+-- *raw* propositional premise such as `m ≤ n` be discharged automatically,
+-- with no `T`-wrapper.  Callers must have the relevant `_⁇` instances in
+-- scope (e.g. `open import Class.Decidable`).
+prove : ∀ {ℓ} {P : Set ℓ} ⦃ d : P ⁇ ⦄ {pf : True (_⁇.dec d)} → P
+prove ⦃ d ⦄ {pf} = toWitness pf
 
 private
 
@@ -862,21 +877,32 @@ private
       go i (suc k) = if mentionsVar i body then 0 else suc (go (suc i) k)
 
   -- Discharge one conditional-rule assignment: apply the lemma to the
-  -- instantiated value args and `tt` for each condition (so Agda checks
-  -- `tt : T true`, i.e. the condition holds), yielding a ground
-  -- unconditional equation.  If the condition is false (`tt : T false`)
-  -- or not in `T`-form, the application is ill-typed → skip this
+  -- instantiated value args and `prove` for each condition, yielding a
+  -- ground unconditional equation.  Agda discharges each premise `P` by
+  -- resolving a `Class.Decidable._⁇` instance and forcing the decision to
+  -- `yes` (see `prove`).  If a condition is false, or its proposition has
+  -- no decidability instance, the application is ill-typed → skip this
   -- candidate (the rule simply does not fire there).
   processCondAssign : List Name → Name → List ArgInfo → List ArgInfo → St
                     → List Term → TC (Maybe Term × St)
   processCondAssign gh n valInfos condInfos st vals =
     let pre = Data.List.zipWith arg valInfos vals
-            ++ map (λ i → arg i (con (quote tt) [])) condInfos in
+            ++ map (λ i → arg i (def (quote prove) [])) condInfos in
     catch (do
       specTy ← inferType (def n pre)
-      (body , tel) ← stripAndReduce 100 specTy
-      (r , st′) ← processRuleMono gh (hName n) pre tel body st
-      return (just r , st′))
+      -- Elaborate the application and demand that no metavariables survive.
+      -- Each `prove` leaves a `True (dec …)` argument: when the condition
+      -- holds it is `⊤` (eta-solved away); when it is false it is `⊥`, which
+      -- cannot be solved and remains as an unsolved meta.  Rejecting any
+      -- leftover meta here skips the candidate (the rule does not fire)
+      -- instead of leaking the meta into the emitted proof.
+      elab ← checkType (def n pre) specTy
+      case findMetas elab of λ where
+        (_ ∷ _) → error1 "simp!: side condition not decided"
+        []      → do
+          (body , tel) ← stripAndReduce 100 specTy
+          (r , st′) ← processRuleMono gh (hName n) pre tel body st
+          return (just r , st′))
       (λ _ → return (nothing , st))
 
   processCondAssigns : List Name → Name → List ArgInfo → List ArgInfo → St

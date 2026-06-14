@@ -57,12 +57,23 @@ Notably **no `--lossy-unification`** is required. Features include
 multi-sorted goals, raw polymorphic stdlib rules (instantiated from the
 goal), mixed universe levels, ordered rewriting for permutative rules (e.g.
 commutativity, via a termination gate), local hypotheses as rules, instance
-rule dictionaries, and relation goals over abstract algebraic bundles (e.g.
-an arbitrary monoid's `≈`, via `simpRel!`).
+rule dictionaries, relation goals over abstract algebraic bundles (e.g.
+an arbitrary monoid's `≈`, via `simpRel!`), and conditional rules whose side
+conditions are decidable propositions (see below).
 
-**Current limitations.** Conditional rules (side conditions) and relations
-defined as plain functions (e.g. `_⊆_`, which `inferType` unfolds to its
-Π-definition) are not yet supported.
+**Conditional rules.** A rule may carry trailing side-condition premises;
+the macro instantiates the rule's value binders from ground subterms of the
+goal and discharges each premise via a `Class.Decidable._⁇` instance,
+forcing the decision to `yes`. So the *unmodified* stdlib lemma
+`m≤n⇒m⊓n≡m : m ≤ n → m ⊓ n ≡ m` rewrites `3 ⊓ 5` to `3` with no boolean
+wrapper — its `m ≤ n` premise is decided automatically (and the rule simply
+does not fire where the condition is false). Callers need the relevant `_⁇`
+instances in scope (`open import Class.Decidable`); these cover ℕ/ℤ/ℚ
+`_≤_`/`_<_` and any `_≡_` over a `DecEq` type, and are user-extensible.
+
+**Current limitations.** Relations defined as plain functions (e.g. `_⊆_`,
+which `inferType` unfolds to its Π-definition) are not yet supported, and a
+conditional rule's premise must have a `Class.Decidable._⁇` instance.
 
 See [`reflective-simp-plan.md`](reflective-simp-plan.md) for the roadmap,
 the migration matrix against the older `Tactic.Simp`, and benchmark numbers;
