@@ -81,14 +81,15 @@ open MonadError ⦃...⦄
 -- and register rules as instances
 --   instance myRule : Simp MyDict; myRule = mkSimp (quote myLemma)
 -- then call `simpD! MyDict`.  Declared fresh here (no dependency on the
--- lossy `Tactic.Simp` module, which has its own `Simp` of the same name).
+-- former lossy `Tactic.Simp` module (now removed), which had its own
+-- `Simp` of the same name).
 record Simp (D : Set) : Set where
   constructor mkSimp
   field ruleName : Name
 
 -- Carries the goal relation's transitivity and reflexivity witnesses
 -- for `simpRel!` (declared fresh; no dependency on the lossy
--- `Tactic.Simp`, which has its own `RelInfo`).
+-- former lossy `Tactic.Simp`, now removed).
 record RelInfo : Set where
   constructor mkRelInfo
   field relTrans relRefl : Name

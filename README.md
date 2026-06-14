@@ -53,16 +53,16 @@ _ = simpRel! (quote +-identityʳ ∷ []) (quote n≤1+n ∷ [])
 the macro frontend may be wrong, but the only consequences are a type error
 or a rule that never fires — every term the macro emits is fully
 re-elaborated by Agda, and the rewriting engine is verified by construction.
-Notably **no `--lossy-unification`** is required (unlike the older
-`Tactic.Simp`). Features include multi-sorted goals, raw polymorphic stdlib
-rules (instantiated from the goal), mixed universe levels, and ordered
-rewriting for permutative rules (e.g. commutativity, via a termination gate).
+Notably **no `--lossy-unification`** is required. Features include
+multi-sorted goals, raw polymorphic stdlib rules (instantiated from the
+goal), mixed universe levels, ordered rewriting for permutative rules (e.g.
+commutativity, via a termination gate), local hypotheses as rules, instance
+rule dictionaries, and relation goals over abstract algebraic bundles (e.g.
+an arbitrary monoid's `≈`, via `simpRel!`).
 
-**Current limitations.** Performance degrades steeply with large rule sets
-(roughly 20+ rules of distinct operators per call becomes expensive; ~50
-rules can exhaust the type-checker) — keep rule sets focused. Module-local
-relation bundles (e.g. an abstract monoid's `≈`) and conditional rules are
-not yet supported.
+**Current limitations.** Conditional rules (side conditions) and relations
+defined as plain functions (e.g. `_⊆_`, which `inferType` unfolds to its
+Π-definition) are not yet supported.
 
 See [`reflective-simp-plan.md`](reflective-simp-plan.md) for the roadmap,
 the migration matrix against the older `Tactic.Simp`, and benchmark numbers;
