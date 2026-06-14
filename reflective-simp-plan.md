@@ -358,11 +358,16 @@ trusts the meta level; prefer features that keep that invariant.
    the bottleneck was `inferType`-per-occurrence, exactly as the
    corrected diagnosis predicted. The ~20-rule ceiling / 50-rule OOM is
    gone for the common case (rules sharing operators).
-2. **Fuel as an option.** The 100-step budget is hard-coded in three
+2. **Fuel as an option — DONE 2026-06-12.** Centralised into `stepFuel`
+   (reads `TCOptions.fuel` key `simp/steps`, default 100); the macros
+   install the entry via `simpTCOptions`.  (Per-call override still needs
+   an options-taking macro variant — small future add.)  WAS: 100 hard-coded in three
    places; chains needing more fail opaquely. Thread it through
    `TCOptions.fuel` (the `("reduceDec/constrs" , 5)` pattern already
    exists in `Tactic.Defaults`) with 100 as default.
-3. **Error rendering polish.** Stuck normal forms print de Bruijn
+3. **Error rendering polish — DONE 2026-06-12.** Stuck normal forms now
+   emit as `termErr` parts, so Agda renders them with real context names
+   (`x`/`y`, not `var 1`).  WAS: printed de Bruijn
    (`var 1`); resolve context names via `getContext` for display.
    Small, pure DX.
 

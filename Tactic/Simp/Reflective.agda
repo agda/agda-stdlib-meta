@@ -63,6 +63,7 @@ open import Relation.Binary.PropositionalEquality
 open import Meta.Init
 open import Meta.Prelude
 open import Reflection.AST.Literal using (nat)
+open import Reflection using (termErr)
 open import Reflection.AlphaEquality
 open import Reflection.Tactic
 open import Reflection.Utils hiding (args; headName)
@@ -351,6 +352,23 @@ private
   -- Quote the normal form instead.
   quoteNorm : RC.Expr → TC Term
   quoteNorm e = local (λ env → record env { normalisation = true }) (quoteTC e)
+
+  -- The rewrite-step budget passed to the verified engine.  Centralised
+  -- here (was hard-coded in several places) and read from `TCOptions.fuel`
+  -- under the key `simp/steps`, defaulting to 100 — so it is one constant
+  -- and, via the options the macros install, adjustable.
+  simpStepsKey : String
+  simpStepsKey = "simp/steps"
+
+  defaultSteps : ℕ
+  defaultSteps = 100
+
+  stepFuel : TC ℕ
+  stepFuel = do
+    fuels ← reader (λ where record { options = record { fuel = f } } → f)
+    case lookupᵇ _==_ fuels simpStepsKey of λ where
+      (just n) → return n
+      nothing  → return defaultSteps
 
   inferSort : ℕ → St → Term → Maybe Term → TC (ℕ × St)
   inferSort depth st t w = do
@@ -1164,11 +1182,14 @@ private
   -- happy-path `solveApp`: module params Ts and ops first), normalise
   -- it (bounded — the result is goal-sized), and `show` it.  The happy
   -- path never reaches here, so it pays nothing.
-  showStuck : Term → Term → ℕ → Term → Term → TC String
-  showStuck TsT opsT g rulesT eE = do
+  -- The error parts naming one stuck side's normal form.  We emit the
+  -- normalised goal-context Term as a `termErr`, so Agda renders it with
+  -- the real context names (`xs`, `n`, …) rather than raw de Bruijn.
+  stuckParts : Term → Term → Term → ℕ → Term → Term → TC (List ErrorPart)
+  stuckParts fuelT TsT opsT g rulesT eE = do
     let nfApp = def (quote RC.Eval.normalForm)
                   ( vArg TsT ∷ vArg opsT
-                  ∷ vArg (`ℕ 100) ∷ vArg rulesT ∷ vArg eE ∷ [] )
+                  ∷ vArg fuelT ∷ vArg rulesT ∷ vArg eE ∷ [] )
     -- Read back the normal-form Expr first and refuse to evaluate huge
     -- ones: rendering a deep normal form through the (non-sharing)
     -- evaluator can take minutes, and a large form almost always means
@@ -1176,8 +1197,8 @@ private
     nfT ← normalise nfApp
     nfE ← unquoteTC {A = RC.Expr} nfT
     if 40 <ᵇ RC.sizeExpr nfE
-      then return ("(normal form with" <+> show (RC.sizeExpr nfE)
-                   <+> "nodes omitted — diverging rule set?)")
+      then return (strErr ("(normal form with" <+> show (RC.sizeExpr nfE)
+                   <+> "nodes omitted — diverging rule set?)") ∷ [])
       else (do
         let valApp = def (quote RC.Eval.evalAt)
                   ( vArg TsT ∷ vArg opsT
@@ -1185,7 +1206,7 @@ private
                   ∷ vArg (def (quote RC.Eval.ρ₀) (vArg TsT ∷ vArg opsT ∷ []))
                   ∷ vArg nfApp ∷ [] )
         t ← normalise valApp
-        return (show t))
+        return (termErr t ∷ []))
 
   ----------------------------------------------------------------
   -- Relation goals (`simpRel!`).
@@ -1205,19 +1226,19 @@ private
   -- normalise it (plain Expr data — bounded).  Returns the normalised
   -- Expr-as-Term, the engine's normal form for `eE`.  Same module-
   -- argument spelling as solveApp (Ts, ops first).
-  computeNF : Term → Term → Term → Term → TC Term
-  computeNF TsT opsT rulesT eE =
+  computeNF : Term → Term → Term → Term → Term → TC Term
+  computeNF fuelT TsT opsT rulesT eE =
     normalise (def (quote RC.Eval.normalForm)
                   ( vArg TsT ∷ vArg opsT
-                  ∷ vArg (`ℕ 100) ∷ vArg rulesT ∷ vArg eE ∷ [] ))
+                  ∷ vArg fuelT ∷ vArg rulesT ∷ vArg eE ∷ [] ))
 
   -- p_i : evalAt g ρ₀ e ≡ evalAt g ρ₀ (normalForm 100 rs e), whose type
   -- reduces (definitional collapse) to the actual goal-side term ≡ nf.
-  mkSimplifyEq : Term → Term → ℕ → Term → Term → Term
-  mkSimplifyEq TsT opsT g rulesT eE =
+  mkSimplifyEq : Term → Term → Term → ℕ → Term → Term → Term
+  mkSimplifyEq fuelT TsT opsT g rulesT eE =
     def (quote RC.Eval.simplifyEq)
       ( vArg TsT ∷ vArg opsT
-      ∷ vArg (`ℕ g) ∷ vArg (`ℕ 100) ∷ vArg rulesT ∷ vArg eE ∷ [] )
+      ∷ vArg (`ℕ g) ∷ vArg fuelT ∷ vArg rulesT ∷ vArg eE ∷ [] )
 
   -- subst-based relation proof (mirrors old buildRelProof).  prefix/rhs
   -- are goal-context terms; shift them under the predicate λ.  `changedL`
@@ -1323,12 +1344,14 @@ private
         (rhsE , st₂) ← conv 0 [] st₁ rhs
         lT  ← quoteNorm lhsE
         rT  ← quoteNorm rhsE
+        fuelN ← stepFuel
         -- Mixed-level handling: build the (possibly Lift-ed) sort table
         -- and matching impls.  `gLifted` says whether the goal sort g was
         -- lifted (then the engine proves `lift lhs ≡ lift rhs` and we
         -- close the real goal with `cong lower`).
         liftInfo ← buildLiftFlags (St.sorts st₂)
         let g = RC.sortOf lhsE
+            fuelT = `ℕ fuelN
         TsT ← case liftInfo of λ where
           nothing               → quoteSorts (St.sorts st₂)
           (just (ℓmax , flags)) → quoteSortsLifted ℓmax flags (St.sorts st₂)
@@ -1343,7 +1366,7 @@ private
               (just (_ , flags)) → quoteList (map (wrapRule flags) allRuleTs)
             solveApp = def (quote RC.Eval.solveAt)
               ( vArg TsT ∷ vArg opsT
-              ∷ vArg (`ℕ g) ∷ vArg (`ℕ 100)
+              ∷ vArg (`ℕ g) ∷ vArg fuelT
               ∷ vArg rulesT ∷ vArg lT ∷ vArg rT ∷ [] )
             mkProof : Term → Term
             mkProof p = if gLifted
@@ -1371,10 +1394,10 @@ private
                             ∷ vArg (def (quote sym) (vArg (eqSide rT) ∷ [])) ∷ []))
                         ∷ [] )
                   in catch (unifyWithGoal (mkProof composed)) λ _ → do
-              lNF ← showStuck TsT opsT g rulesT lT
-              rNF ← showStuck TsT opsT g rulesT rT
-              error1 ("simp!: simplification failed to close the goal;\n  the two sides reached the normal forms\n    "
-                      <+> lNF <+> "\n  and\n    " <+> rNF))
+              lNF ← stuckParts fuelT TsT opsT g rulesT lT
+              rNF ← stuckParts fuelT TsT opsT g rulesT rT
+              error (strErr "simp!: simplification failed to close the goal; the two sides reached the normal forms\n    "
+                     ∷ lNF ++ strErr "\n  and\n    " ∷ rNF))
             else unifyWithGoal (mkProof (def (quote RC.from-just!) (vArg solveApp ∷ [])))
           _ → unifyWithGoal (mkProof (def (quote RC.from-just!) (vArg solveApp ∷ [])))
       _ → error1 "simp!: goal is not a propositional equality"
@@ -1439,15 +1462,17 @@ private
         -- is unimplemented); fail cleanly rather than emit a bad term.
         (nothing) ← buildLiftFlags (St.sorts st₃)
           where (just _) → error1 "simpRel!: mixed universe levels are unsupported for relation goals (use monomorphic carrier types)"
+        fuelN ← stepFuel
         let rulesT = quoteList ruleTs
             g      = RC.sortOf lhsE
+            fuelT  = `ℕ fuelN
         lT  ← quoteNorm lhsE
         rT  ← quoteNorm rhsE
         TsT ← quoteSorts (St.sorts st₃)
         let opsT = quoteOps (St.ops st₃)
         -- Meta-level normal forms (Expr data — bounded normalise).
-        lNFt ← computeNF TsT opsT rulesT lT
-        rNFt ← computeNF TsT opsT rulesT rT
+        lNFt ← computeNF fuelT TsT opsT rulesT lT
+        rNFt ← computeNF fuelT TsT opsT rulesT rT
         -- The actual goal-context normal-form Terms (definitional
         -- collapse: evalAt g ρ₀ nf reduces to the goal side's nf).
         lhsNFterm ← normalise (def (quote RC.Eval.evalAt)
@@ -1460,11 +1485,11 @@ private
                       ∷ vArg rNFt ∷ [] ))
         let changedL = not (lT =α= lNFt)
             changedR = not (rT =α= rNFt)
-            p1 = mkSimplifyEq TsT opsT g rulesT lT
-            p2 = mkSimplifyEq TsT opsT g rulesT rT
+            p1 = mkSimplifyEq fuelT TsT opsT g rulesT lT
+            p2 = mkSimplifyEq fuelT TsT opsT g rulesT rT
         -- (b) Chain ~-rules from lhsNFterm towards rhsNFterm.
         relRules ← traverse loadRelRule relNames
-        (just (core , _)) ← relChain ri relRules 100 lhsNFterm rhsNFterm
+        (just (core , _)) ← relChain ri relRules fuelN lhsNFterm rhsNFterm
           where nothing → error1
                   ("simpRel!: could not connect the normal forms;\n  lhs-nf = "
                    <+> show lhsNFterm <+> "\n  rhs-nf = " <+> show rhsNFterm)
@@ -1490,9 +1515,14 @@ simpRelTactic eqNames relNames ri =
   local (λ env → record env { reconstruction = true })
         (simpRelGoal 100 0 ri eqNames relNames)
 
+-- TC options the macros install: carries the `simp/steps` fuel entry so
+-- `stepFuel` reads the (default 100) rewrite-step budget.
+simpTCOptions : TCOptions
+simpTCOptions = record defaultTCOptions { fuel = (simpStepsKey , defaultSteps) ∷ [] }
+
 macro
   simp! : List Name → Tactic
-  simp! names = initTacOpts (simpRTactic names) defaultTCOptions
+  simp! names = initTacOpts (simpRTactic names) simpTCOptions
 
   -- Resolve the rule names from the `Simp D` instances, then run the
   -- ordinary machinery.
@@ -1500,7 +1530,7 @@ macro
   simpD! D = initTacOpts (do
     dictTy ← quoteTC D
     names  ← getDictNames dictTy
-    simpRTactic names) defaultTCOptions
+    simpRTactic names) simpTCOptions
 
   -- Like `simp!` but also takes local hypotheses.  The first argument
   -- is an ordinary (elaborated) `List Name`; the second is written as
@@ -1509,7 +1539,7 @@ macro
   simpH! : List Name → Term → Tactic
   simpH! names hypsExpr = initTacOpts (do
     hyps ← unquoteHyps 100 hypsExpr
-    simpHTactic names hyps) defaultTCOptions
+    simpHTactic names hyps) simpTCOptions
 
   -- Prove `lhs ~ rhs` for a binary relation `~` by (a) ≡-normalising
   -- both sides with the verified engine and transporting along ~ with
@@ -1518,7 +1548,7 @@ macro
   -- and the relation's trans/refl info.
   simpRel! : List Name → List Name → RelInfo → Tactic
   simpRel! eqNames relNames ri =
-    initTacOpts (simpRelTactic eqNames relNames ri) defaultTCOptions
+    initTacOpts (simpRelTactic eqNames relNames ri) simpTCOptions
 
   -- Like `simpRel!`, but the ≡-rule and ~-rule name lists are resolved
   -- from `Simp` instance dictionaries `EqD` / `RelD`.
@@ -1528,7 +1558,7 @@ macro
     relTy    ← quoteTC RelD
     eqNames  ← getDictNames eqTy
     relNames ← getDictNames relTy
-    simpRelTactic eqNames relNames ri) defaultTCOptions
+    simpRelTactic eqNames relNames ri) simpTCOptions
 
 -- ** Tests
 
