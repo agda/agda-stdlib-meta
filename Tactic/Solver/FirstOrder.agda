@@ -287,11 +287,17 @@ private
   -- particular ∃-elimination, for free. One level deep; the projected types
   -- re-enter the formula like any hypothesis, so an implication field becomes
   -- a usable ⇒-antecedent rather than part of an opaque atom.
+  --
+  -- Only hypotheses the engine treats as *opaque atoms* are projected: a
+  -- non-dependent `Σ`/`_×_` (a product) is already split into its components by
+  -- `classify`, so projecting it would just redo that work on every goal with a
+  -- product hypothesis. We project exactly the records `classify` cannot see
+  -- into — `⇔`/`Equivalence`, a dependent `Σ` (`∃`), a user record.
   projectHyps : List (Term × Term) → TC (List (Term × Term))
   projectHyps []               = pure []
   projectHyps ((pf , ty) ∷ hs) = do
-    here ← case ty of λ where
-      (def nm _) → catchTC
+    here ← case classify ty of λ where
+      (sAtom (def nm _)) → catchTC
         (getDefinition nm >>= λ where
           (record-type _ fs) → projs fs
           _                  → pure [])
@@ -523,6 +529,27 @@ private
     go i (t ∷ ts) = strErr ("\n  [" String.++ show i String.++ "]  ")
                   ∷ termErr t ∷ go (suc i) ts
 
+  -- Run the decision procedure over the reified `body` with the given
+  -- hypotheses (the formula is closed, so normalising is pure computation),
+  -- returning the assembled `solve` call if a derivation is found. Embedding
+  -- the found derivation means re-checking it later is cheap — the search is
+  -- not re-run at conversion time.
+  attempt : Maybe ℕ → List Term → Term → Term → List (Term × Term) → TC (Maybe Term)
+  attempt mfuel atoms `n `body hs = do
+    `hs ← reifyList depth atoms `n (List.map proj₂ hs)
+    let `φ    = foldr (fBin (quote _⇒′_) `n) `body `hs
+    let `Γ    = con (quote List.List.[]) (2 ⋯⟅∷⟆ [])
+    let `srch = case mfuel of λ where
+                  (just fuel) → def (quote search)     (`n ⟅∷⟆ toTerm fuel ⟨∷⟩ `Γ ⟨∷⟩ `φ ⟨∷⟩ [])
+                  nothing     → def (quote decideFast) (`n ⟅∷⟆ `Γ ⟨∷⟩ `φ ⟨∷⟩ [])
+    normalise `srch >>= λ where
+      (con (quote just) args) → case vArgs args of λ where
+        -- `solve`'s implicits (n, ℓ, φ) are all pinned by the environment & drv
+        (d ∷ _) → pure (just (def (quote solve)
+                       (mkEnv atoms ⟨∷⟩ d ⟨∷⟩ List.map (λ h → vArg (proj₁ h)) hs)))
+        _       → pure nothing
+      _ → pure nothing
+
   -- Build a *proof term* for an already-normalised `goal` (stated in the caller's
   -- `withReduceDefs` context), discharging leaves with the oracles `oraclesOf`
   -- builds from the (weakened) lemma proof terms — they are an input here because
@@ -545,51 +572,38 @@ private
     let baseHyps = hyps ++ uHyps ++ pHyps
     let hTys  = List.map proj₂ baseHyps
     atoms     ← collect depth body [] >>= collectList depth hTys
-    -- discharge what the oracles can; their proofs join the ambient hypotheses.
-    -- `withReduceDefs (false , [])` undoes the connective blocking *for the oracle
-    -- elaboration*: the falsity oracle's `¬ P` target must reduce to `P → ⊥`.
-    -- The always-on oracles see every atom (the falsity/lift rules act on
-    -- *hypothesis* atoms). The extra oracles — quantifier instantiation, ring,
-    -- constructor search — only see atoms that are not already hypotheses or
-    -- default-discharged: they could only re-prove those redundantly, and the
-    -- pruning is what keeps the recursive quantifier oracles linear along a
-    -- lemma chain instead of re-searching every hypothesis atom at every level.
-    oHyps     ← extendCtx binders
-                  (withReduceDefs (false , []) (do
-                    dHyps ← oracleHyps defaultOracles atoms
-                    let covered = hTys ++ List.map proj₂ dHyps
-                    let rest    = filterᵇ
-                          (λ a → not (is-just (findAtomIndex a covered))) atoms
-                    -- instantiation candidates: the lemmas and the record-field
-                    -- projections (so e.g. `proj₂ e : P (proj₁ e)` can pin an
-                    -- instantiation's witness — ∃-elimination)
-                    eHyps ← oracleHyps (oraclesOf (List.map proj₁ (uHyps ++ pHyps))) rest
-                    pure (dHyps ++ eHyps)))
-    let allHyps = baseHyps ++ oHyps
     let `n    = toTerm (length atoms)
     `body     ← reify depth atoms `n body
-    `hyps     ← reifyList depth atoms `n (List.map proj₂ allHyps)
-    let `φ    = foldr (fBin (quote _⇒′_) `n) `body `hyps
-    let `Γ    = con (quote List.List.[]) (2 ⋯⟅∷⟆ [])
-    let `srch = case mfuel of λ where
-                  (just fuel) → def (quote search)     (`n ⟅∷⟆ toTerm fuel ⟨∷⟩ `Γ ⟨∷⟩ `φ ⟨∷⟩ [])
-                  nothing     → def (quote decideFast) (`n ⟅∷⟆ `Γ ⟨∷⟩ `φ ⟨∷⟩ [])
-    -- Run the decision procedure *now* (the formula is closed, so this is pure
-    -- computation) and embed the found derivation directly: an unprovable goal
-    -- gets a real error instead of `from-just` dying at conversion time, and a
-    -- provable one re-checks the (small) derivation rather than re-running the
-    -- search.
-    `drv  ← normalise `srch >>= λ where
-      (con (quote just) args) → case vArgs args of λ where
-        (d ∷ _) → pure d
-        _       → typeError (strErr "firstorder: malformed search result" ∷ [])
-      (con (quote nothing) _) → typeError (unprovableMsg mfuel atoms)
-      r → typeError
-        (strErr "firstorder: search did not normalise to a constructor: " ∷ termErr r ∷ [])
-    -- `solve`'s implicits (n, ℓ, φ) are all pinned by the environment and `drv`
-    let proof = def (quote solve)  (mkEnv atoms ⟨∷⟩ `drv ⟨∷⟩
-                                    List.map (λ h → vArg (proj₁ h)) allHyps)
-    pure (prependLams (prepBinders binders) proof)
+    -- discharge what the oracles can; their proofs join the ambient hypotheses.
+    -- `withReduceDefs (false , [])` undoes the connective blocking *for the
+    -- oracle elaboration*: the falsity oracle's `¬ P` target must reduce to
+    -- `P → ⊥`. The always-on oracles see every atom (the falsity/lift rules act
+    -- on *hypothesis* atoms). The extra oracles — quantifier instantiation,
+    -- introduction, ring, constructor search — only see atoms that are not
+    -- already hypotheses or default-discharged: they could only re-prove those
+    -- redundantly, and the pruning keeps the recursive quantifier oracles linear
+    -- along a lemma chain instead of re-searching every hypothesis atom at every
+    -- level.
+    oHyps ← extendCtx binders
+              (withReduceDefs (false , []) (do
+                dHyps ← oracleHyps defaultOracles atoms
+                let covered = hTys ++ List.map proj₂ dHyps
+                let rest    = filterᵇ
+                      (λ a → not (is-just (findAtomIndex a covered))) atoms
+                -- instantiation candidates: the lemmas, plus the *non-function*
+                -- record-field projections. The latter let `proj₂ e :
+                -- P (proj₁ e)` pin an instantiation's witness (∃-elimination);
+                -- excluding the function/Π-typed projections (a `⇔`'s `to`/
+                -- `from` and its congruence proofs) is what matters for cost —
+                -- they are already usable as plain ⇒-hypotheses, and feeding
+                -- them as candidates makes `scanCtx` fan out over every one at
+                -- every recursion level (≈16s per `⇔`-hypothesis goal).
+                let projCands = filterᵇ (λ where (_ , pi _ _) → false ; _ → true) pHyps
+                eHyps ← oracleHyps (oraclesOf (List.map proj₁ (uHyps ++ projCands))) rest
+                pure (dHyps ++ eHyps)))
+    attempt mfuel atoms `n `body (baseHyps ++ oHyps) >>= λ where
+      (just proof) → pure (prependLams (prepBinders binders) proof)
+      nothing      → typeError (unprovableMsg mfuel atoms)
 
   -- A function-typed whole-RHS goal whose codomain is inhabited *without* the
   -- argument — `A → ⊤`, or a function into an η-record or record product like
