@@ -849,26 +849,78 @@ private
     (rs , st₂) ← processAssigns gh n infos st₁ vs
     return (r ∷ rs , st₂)
 
+  -- Number of trailing binders whose variable is unused in the body —
+  -- these are the rule's *side conditions* (a proof argument the
+  -- equation depends on but does not mention).  `∀ m n → T (m ≤ᵇ n) →
+  -- m ⊓ n ≡ m` has one (the `T …` proof).  Plain rules have zero (every
+  -- binder occurs in the lhs).
+  condCount : List (ArgInfo × Term) → Term → ℕ
+  condCount tel body = go 0 (length tel)
+    where
+      go : ℕ → ℕ → ℕ
+      go i 0       = 0
+      go i (suc k) = if mentionsVar i body then 0 else suc (go (suc i) k)
+
+  -- Discharge one conditional-rule assignment: apply the lemma to the
+  -- instantiated value args and `tt` for each condition (so Agda checks
+  -- `tt : T true`, i.e. the condition holds), yielding a ground
+  -- unconditional equation.  If the condition is false (`tt : T false`)
+  -- or not in `T`-form, the application is ill-typed → skip this
+  -- candidate (the rule simply does not fire there).
+  processCondAssign : List Name → Name → List ArgInfo → List ArgInfo → St
+                    → List Term → TC (Maybe Term × St)
+  processCondAssign gh n valInfos condInfos st vals =
+    let pre = Data.List.zipWith arg valInfos vals
+            ++ map (λ i → arg i (con (quote tt) [])) condInfos in
+    catch (do
+      specTy ← inferType (def n pre)
+      (body , tel) ← stripAndReduce 100 specTy
+      (r , st′) ← processRuleMono gh (hName n) pre tel body st
+      return (just r , st′))
+      (λ _ → return (nothing , st))
+
+  processCondAssigns : List Name → Name → List ArgInfo → List ArgInfo → St
+                     → List (List Term) → TC (List Term × St)
+  processCondAssigns gh n vI cI st []       = return ([] , st)
+  processCondAssigns gh n vI cI st (v ∷ vs) = do
+    (mr , st₁) ← processCondAssign gh n vI cI st v
+    (rs , st₂) ← processCondAssigns gh n vI cI st₁ vs
+    return ((case mr of λ where (just r) → r ∷ rs ; nothing → rs) , st₂)
+
   processRule : List Term → St → Name → TC (List Term × St)
   processRule cands st n = do
     ty ← getType n
     (body , tel) ← stripAndReduce 100 ty
-    let flags = classify tel
-        p     = countLeading flags
-    if anyB id (drop p flags)
-      then error1 ("simp!: rule parameters appear after pattern binders (unsupported): " <+> show n)
-      else (case p of λ where
-        zero → do
-          (r , st₁) ← processRuleMono (headsOf cands) (hName n) [] tel body st
-          return (r ∷ [] , st₁)
-        _ → do
-          (def (quote _≡_) (hArg _ ∷ hArg _ ∷ vArg lhs ∷ vArg _ ∷ [])) ← return body
-            where _ → error1 ("simp!: not an equation: " <+> show body)
-          (just hd) ← return (headName lhs)
-            where nothing → error1 ("simp!: cannot instantiate a rule whose lhs is not an application: " <+> show n)
-          case findAssignments (length tel) p hd lhs cands of λ where
-            []    → error1 ("simp!: could not instantiate polymorphic rule from the goal: " <+> show n)
-            asgns → processAssigns (headsOf cands) n (map proj₁ (take p tel)) st asgns)
+    case condCount tel body of λ where
+      (suc c) → do
+        -- Conditional rule: instantiate ALL value binders from ground
+        -- goal candidates and discharge the trailing condition(s).
+        (def (quote _≡_) (hArg _ ∷ hArg _ ∷ vArg lhs ∷ vArg _ ∷ [])) ← return body
+          where _ → error1 ("simp!: not an equation: " <+> show body)
+        (just hd) ← return (headName lhs)
+          where nothing → error1 ("simp!: conditional rule lhs is not an application: " <+> show n)
+        let nVals = length tel ∸ suc c
+        case findAssignments (length tel) nVals hd lhs cands of λ where
+          []    → return ([] , st)
+          asgns → processCondAssigns (headsOf cands) n
+                    (map proj₁ (take nVals tel)) (map proj₁ (drop nVals tel)) st asgns
+      zero → do
+        let flags = classify tel
+            p     = countLeading flags
+        if anyB id (drop p flags)
+          then error1 ("simp!: rule parameters appear after pattern binders (unsupported): " <+> show n)
+          else (case p of λ where
+            zero → do
+              (r , st₁) ← processRuleMono (headsOf cands) (hName n) [] tel body st
+              return (r ∷ [] , st₁)
+            _ → do
+              (def (quote _≡_) (hArg _ ∷ hArg _ ∷ vArg lhs ∷ vArg _ ∷ [])) ← return body
+                where _ → error1 ("simp!: not an equation: " <+> show body)
+              (just hd) ← return (headName lhs)
+                where nothing → error1 ("simp!: cannot instantiate a rule whose lhs is not an application: " <+> show n)
+              case findAssignments (length tel) p hd lhs cands of λ where
+                []    → error1 ("simp!: could not instantiate polymorphic rule from the goal: " <+> show n)
+                asgns → processAssigns (headsOf cands) n (map proj₁ (take p tel)) st asgns)
 
   processRules : List Term → List Name → St → TC (List Term × St)
   processRules cands []       st = return ([] , st)

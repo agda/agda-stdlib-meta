@@ -407,7 +407,21 @@ trusts the meta level; prefer features that keep that invariant.
 
 ### Tier 3 — Power features
 
-9. **Conditional rules, staged** (per the Phase-3 analysis): first a
+9. **Conditional rules — DONE (ground/T-form) 2026-06-12.** The Phase-3
+   "proof-free `Subst → Bool` gate" (9a) turned out INFEASIBLE: an engine
+   `Rule.sound` is unconditional, so a genuinely-conditional equation
+   can't be represented that way (a gate can't supply `sound`).  Sound
+   path instead = **macro-time discharge**: a rule `∀ <vals> → T (cond)
+   → lhs ≡ rhs` has its value binders instantiated from ground goal
+   candidates (reusing `findAssignments`), the trailing `T`-condition
+   discharged by `tt` (Agda checks `tt : T true`), and the resulting
+   UNCONDITIONAL equation emitted as an engine rule — no engine change,
+   `--safe` intact.  Conditions detected as trailing binders unused in
+   the body (`condCount`).  Tests ck₁/ck₂; false conditions don't fire
+   (clean failure).  LIMITATIONS: condition must be `T (bool)` form (not
+   arbitrary `Prop`); fires only on ground operands in the goal.  The
+   symbolic fragment (open conditions, needing an Env-threaded `csound`
+   + a ρ₀-grounded engine) remains research.  WAS, per the Phase-3 analysis: first a
    proof-free `Subst → Bool` gate (reuses the `perm` plumbing; safe by
    construction) for ground-literal decidable side conditions; then the
    symbolic fragment via an Env-threaded `csound` field plus one new

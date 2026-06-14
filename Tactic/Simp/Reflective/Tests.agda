@@ -15,7 +15,7 @@
 
 module Tactic.Simp.Reflective.Tests where
 
-open import Data.Bool using (Bool; true; false; if_then_else_; _∧_)
+open import Data.Bool using (Bool; true; false; if_then_else_; _∧_; T)
 open import Data.Bool.Properties using (∧-comm)
 open import Data.List using (List; []; _∷_; _++_; map; length; reverse)
 open import Data.List.Properties
@@ -24,10 +24,10 @@ open import Data.List.Relation.Binary.Permutation.Propositional
   using (_↭_; ↭-refl; ↭-trans)
 import Data.List.Relation.Binary.Permutation.Propositional.Properties as ↭Prop
 import Algebra.Bundles as AlgB
-open import Data.Nat using (ℕ; zero; suc; _+_; _*_; _∸_; _⊔_; _≤_; _≥_; _<_)
+open import Data.Nat using (ℕ; zero; suc; _+_; _*_; _∸_; _⊔_; _⊓_; _≤_; _≥_; _<_; _≤ᵇ_)
 open import Data.Nat.Properties
   using ( +-identityʳ; +-identityˡ; *-identityʳ; *-zeroʳ; +-assoc; +-comm
-        ; n∸n≡0; ⊔-comm; ≤-refl; ≤-trans; n≤1+n)
+        ; n∸n≡0; ⊔-comm; ≤-refl; ≤-trans; n≤1+n; m≤n⇒m⊓n≡m; ≤ᵇ⇒≤)
 open import Data.Vec using (Vec)
 open import Data.Product using (_×_; _,_; proj₁; proj₂)
 open import Data.Unit using (⊤; tt)
@@ -491,3 +491,33 @@ gJ₄ = simp! []
 --   * diverging rule set:       same, with "(normal form with N nodes omitted)"
 --   * polymorphic rule with no instantiation candidates:
 --                               "could not instantiate polymorphic rule from the goal"
+
+----------------------------------------------------------------
+-- K. Conditional rules
+----------------------------------------------------------------
+-- A rule may carry a side condition as a trailing `T (boolExpr)`
+-- premise.  simp! instantiates its value binders from ground goal
+-- candidates and discharges the condition by `tt` (Agda checks
+-- `tt : T true`), emitting the resulting unconditional equation.  The
+-- rule fires only where the condition holds on the concrete operands.
+
+private
+  -- `T`-form wrapper over the stdlib Prop-conditioned `m≤n⇒m⊓n≡m`.
+  ⊓-le : ∀ (m n : ℕ) → T (m ≤ᵇ n) → m ⊓ n ≡ m
+  ⊓-le m n p = m≤n⇒m⊓n≡m (≤ᵇ⇒≤ m n p)
+
+-- condition holds (3 ≤ᵇ 5 = true): fires
+ck₁ : 3 ⊓ 5 ≡ 3
+ck₁ = simp! (quote ⊓-le ∷ [])
+
+-- conditional rule chained with an ordinary one
+ck₂ : (3 ⊓ 5) + 0 ≡ 3
+ck₂ = simp! (quote ⊓-le ∷ quote +-identityʳ ∷ [])
+
+-- LIMITATION (documented): the condition must be in `T (bool)` form
+-- (discharged by `tt`), not an arbitrary `Prop` premise; and the rule
+-- fires only on ground operands present in the goal (the condition is
+-- decided at macro time).  When the condition is FALSE the rule does
+-- not fire and the goal fails cleanly, e.g.
+--   bad : 5 ⊓ 3 ≡ 5
+--   bad = simp! (quote ⊓-le ∷ [])   -- 5 ≤ᵇ 3 = false → "failed to close"
