@@ -198,7 +198,7 @@ reflective implementation. "✓ test" means an equivalent test exists in
 | `testBag₃` (↭, mixed ≡+~ chain) | `simpRel! (++-idˡ ∷ []) (++-comm ∷ []) …` | ✓ added (`testBag₃`) |
 | `testBag₅` (↭, double ≡-normalise + ~-step) | `simpRel! (++-idˡ ∷ ++-idʳ ∷ []) (++-comm ∷ []) …` | ✓ added (`testBag₅`) |
 | `testRelDict₁`,`₂` (simpRel from a dictionary) | — | gap — no `simpRelD!` frontend yet; `simpRel!` takes explicit name lists. Trivial to add (mirror `simpD!`'s `getDictNames`); not blocking. |
-| `testMonoid₁`–`₄` (abstract monoid `≈`) | — | **open gap (confirmed)** — module-local relation bundles. Verified: `simpRel! [] (quote ∙-identR ∷ []) …` on `x ∙ M-ε ≈ x` fails with `simpRel!: mixed universe levels are unsupported for relation goals`. The carrier `Carrier : Set mc` and the relation `_≈_ : … → Set mℓ` sit at *different module-parameter levels*, which `simpRel!`'s `buildLiftFlags` (deliberately) refuses for relation goals. Needs module-parameter-as-sort + lifted relation-goal handling. Documented, not fixed. |
+| `testMonoid₁`–`₄` (abstract monoid `≈`) | `simpRel! [] (quote ∙-id ∷ …) M-info` | **DONE 2026-06-12** via opDrop (bundle arg `M` dropped during reification). Tests `tMon₁`–`tMon₄`. WAS: Verified: `simpRel! [] (quote ∙-identR ∷ []) …` on `x ∙ M-ε ≈ x` fails with `simpRel!: mixed universe levels are unsupported for relation goals`. The carrier `Carrier : Set mc` and the relation `_≈_ : … → Set mℓ` sit at *different module-parameter levels*, which `simpRel!`'s `buildLiftFlags` (deliberately) refuses for relation goals. Needs module-parameter-as-sort + lifted relation-goal handling. Documented, not fixed. |
 | Known limitation #1: commutativity diverges | `simp! (quote +-comm ∷ [])` | **now WORKS** — ordered rewriting (item 9) orients `+-comm` via the permutative gate (`ltExpr`). ✓ test (`torder₁`: `x + y ≡ y + x`); AC trio in `torder₂`/`torder₄`, and `gAC` in the bench. This is a *reversal* of the old limitation. |
 | Known limitation #2: no local hypotheses | `simpH! names (h ∷ [])` | **now WORKS** — `simpH!` accepts context terms as ground / ∀-carrier rules. ✓ test (`th₁`–`th₄`). |
 | Known limitation #3: conditional equations | — | **open gap (confirmed)** — `stripAndReduce` strips all Pi binders including hypothesis arrows, so only unconditional `∀ x… → lhs ≡ rhs` rules work. This is roadmap item 11 (decidable-hypothesis design), deliberately unimplemented. Documented, not fixed. |
@@ -539,3 +539,14 @@ exploration agent's over-claim):
 Net: the rebase is the valuable foundation (shared infra + branch
 alignment).  The highest-value next step is the `opDrop`-via-`M`
 feature for monoid-`≈`.
+
+## Monoid-`≈` DONE (2026-06-12) — supersedes the scattered "open gap" notes above
+
+Abstract bundle relations (`simpRel!` over an arbitrary `Monoid M`'s
+`_≈_`, with `_∙_`/`ε`) are now supported, via the ring-solver `opDrop`
+insight: `St.bundle` carries the relation's bundle `M` (its last visible
+prefix arg); `shouldDrop` drops a leading visible arg α-equal (after
+`strengthenBy`) to `M`; `mkImpl`'s `dropFst` bakes it in like a hidden
+arg, so `M` (higher universe level than the carrier) never becomes a
+sort. Tests `tMon₁`–`tMon₄`. This was the last hold-out for deprecating
+the lossy `Tactic.Simp` — that deprecation is now unblocked.
