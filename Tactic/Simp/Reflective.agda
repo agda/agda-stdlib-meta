@@ -1462,36 +1462,46 @@ private
         let allRuleTs = ruleTs ++ hypTs
         (lhsE , st₂) ← conv 0 [] st₁′ lhs
         (rhsE , st₃) ← conv 0 [] st₂ rhs
-        -- Mixed universe levels are not supported for relation goals
-        -- (the `Lift`/`cong lower` interaction with the subst predicates
-        -- is unimplemented); fail cleanly rather than emit a bad term.
-        (nothing) ← buildLiftFlags (St.sorts st₃)
-          where (just _) → error1 "simpRel!: mixed universe levels are unsupported for relation goals (use monomorphic carrier types)"
+        -- Mixed universe levels: `Lift` lower sorts (like `simp!`).  The
+        -- relation is over the BARE carrier, so when the carrier sort g
+        -- is lifted we `lower` the extracted normal forms and `cong
+        -- lower` the ≡-normalisation proofs back to it.
+        liftInfo ← buildLiftFlags (St.sorts st₃)
         fuelN ← stepFuel
-        let rulesT = quoteList allRuleTs
-            g      = RC.sortOf lhsE
-            fuelT  = `ℕ fuelN
         lT  ← quoteNorm lhsE
         rT  ← quoteNorm rhsE
-        TsT ← quoteSorts (St.sorts st₃)
-        let opsT = quoteOps (St.ops st₃)
+        TsT ← case liftInfo of λ where
+          nothing               → quoteSorts (St.sorts st₃)
+          (just (ℓmax , flags)) → quoteSortsLifted ℓmax flags (St.sorts st₃)
+        let g      = RC.sortOf lhsE
+            fuelT  = `ℕ fuelN
+            opsT   = case liftInfo of λ where
+              nothing            → quoteOps (St.ops st₃)
+              (just (_ , flags)) → quoteOpsLifted flags (St.ops st₃)
+            gLifted = case liftInfo of λ where
+              nothing            → false
+              (just (_ , flags)) → liftedAt flags g
+            rulesT = case liftInfo of λ where
+              nothing            → quoteList allRuleTs
+              (just (_ , flags)) → quoteList (map (wrapRule flags) allRuleTs)
+            lowerT     = λ t → if gLifted then def (quote lower) (vArg t ∷ []) else t
+            congLowerT = λ p → if gLifted
+              then def (quote cong) (vArg (def (quote lower) []) ∷ vArg p ∷ [])
+              else p
+            evalNF = λ nfT → def (quote RC.Eval.evalAt)
+              ( vArg TsT ∷ vArg opsT ∷ vArg (`ℕ g)
+              ∷ vArg (def (quote RC.Eval.ρ₀) (vArg TsT ∷ vArg opsT ∷ []))
+              ∷ vArg nfT ∷ [] )
         -- Meta-level normal forms (Expr data — bounded normalise).
         lNFt ← computeNF fuelT TsT opsT rulesT lT
         rNFt ← computeNF fuelT TsT opsT rulesT rT
-        -- The actual goal-context normal-form Terms (definitional
-        -- collapse: evalAt g ρ₀ nf reduces to the goal side's nf).
-        lhsNFterm ← normalise (def (quote RC.Eval.evalAt)
-                      ( vArg TsT ∷ vArg opsT ∷ vArg (`ℕ g)
-                      ∷ vArg (def (quote RC.Eval.ρ₀) (vArg TsT ∷ vArg opsT ∷ []))
-                      ∷ vArg lNFt ∷ [] ))
-        rhsNFterm ← normalise (def (quote RC.Eval.evalAt)
-                      ( vArg TsT ∷ vArg opsT ∷ vArg (`ℕ g)
-                      ∷ vArg (def (quote RC.Eval.ρ₀) (vArg TsT ∷ vArg opsT ∷ []))
-                      ∷ vArg rNFt ∷ [] ))
+        -- The actual goal-context normal-form Terms (bare carrier).
+        lhsNFterm ← normalise (lowerT (evalNF lNFt))
+        rhsNFterm ← normalise (lowerT (evalNF rNFt))
         let changedL = not (lT =α= lNFt)
             changedR = not (rT =α= rNFt)
-            p1 = mkSimplifyEq fuelT TsT opsT g rulesT lT
-            p2 = mkSimplifyEq fuelT TsT opsT g rulesT rT
+            p1 = congLowerT (mkSimplifyEq fuelT TsT opsT g rulesT lT)
+            p2 = congLowerT (mkSimplifyEq fuelT TsT opsT g rulesT rT)
         -- (b) Chain ~-rules from lhsNFterm towards rhsNFterm.
         relRules ← traverse loadRelRule relNames
         (just (core , _)) ← relChain ri relRules fuelN lhsNFterm rhsNFterm

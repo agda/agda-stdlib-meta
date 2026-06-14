@@ -365,6 +365,16 @@ gGH₁ {n} {m} h = simpRelH! (quote +-identityʳ ∷ []) [] (h ∷ []) ≤-info
 gGH₂ : ∀ {a b c : ℕ} → a ≡ b → c ≡ b → a + c ≤ b + b
 gGH₂ ha hc = simpRelH! [] [] (ha , hc) ≤-info
 
+-- Mixed universe levels in a relation goal: carrier ℕ (level 0) with a
+-- `List A` subterm (level a).  The lower sort is Lift-ed and the proof
+-- lower-wrapped back to the bare carrier.
+gGL₁ : ∀ {a} {A : Set a} (xs : List A) → length (xs ++ []) ≤ length xs
+gGL₁ xs = simpRel! (quote ++-identityʳ ∷ []) [] ≤-info
+
+-- both sides need normalisation, still mixed-level
+gGL₂ : ∀ {a} {A : Set a} (xs : List A) → length (xs ++ []) ≤ length (xs ++ [])
+gGL₂ xs = simpRel! (quote ++-identityʳ ∷ []) [] ≤-info
+
 -- Abstract bundle relations: `simpRel!` over an arbitrary `Monoid M`'s
 -- `_≈_`, with `_∙_`/`ε` recognised as bundle operations (their leading
 -- bundle argument `M` is dropped during reification, so `M` — at a

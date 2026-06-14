@@ -393,7 +393,11 @@ trusts the meta level; prefer features that keep that invariant.
    gGH₁/gGH₂. (~-hypotheses as chain steps still open.) WAS: `simpRelH!` (or extend
    `simpRel!`): ≡-hypotheses feed the engine like `simpH!`; a further
    step is ~-valued hypotheses as chain steps in Option B.
-7. **Mixed levels for `simpRel!`** — currently a clean error; the
+7. **Mixed levels for `simpRel!` — DONE 2026-06-12.** `Lift`s lower
+   sorts (as `simp!` does); since the relation is over the bare carrier,
+   when the carrier sort is lifted the extracted normal forms are
+   `lower`-ed and the ≡-proofs `cong lower`-wrapped. Tests gGL₁/gGL₂
+   (`length (xs ++ []) ≤ length xs` over `A : Set a`). WAS: a clean error; the
    `simp!` Lift machinery extends (the subst-transport predicates need
    the same lift/lower wrapping; goal-sort-lifted needs thought).
 8. **Monoid-`≈` / module-local relation bundles.** The remaining old-
