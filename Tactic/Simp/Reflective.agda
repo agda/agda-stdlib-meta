@@ -137,6 +137,35 @@ private
           then (0 , e ∷ rest)
           else (let (i , rest′) = go rest in suc i , e ∷ rest′)
 
+  -- Look up an operation by its (α-equal) impl, returning its flat
+  -- index and result sort.  The result sort of an application is
+  -- determined by its impl (the head plus baked-in implicit/level
+  -- args), so a repeat occurrence can reuse the stored sort instead of
+  -- re-running the (expensive) `inferType >>= normalise` in `inferSort`.
+  findOpByImpl : Term → List (Term × List ℕ × ℕ) → Maybe (ℕ × ℕ)
+  findOpByImpl im []                   = nothing
+  findOpByImpl im ((im′ , _ , r′) ∷ rest) =
+    if im =α= im′
+      then just (0 , r′)
+      else (case findOpByImpl im rest of λ where
+        (just (i , r)) → just (suc i , r)
+        nothing        → nothing)
+
+  -- The type stored at a sort index (for re-merging a witness on the
+  -- op-reuse fast path without re-inferring the type).
+  sortTypeAt : ℕ → List (Term × Maybe Term) → Maybe Term
+  sortTypeAt _       []            = nothing
+  sortTypeAt zero    ((ty , _) ∷ _) = just ty
+  sortTypeAt (suc n) (_ ∷ rest)    = sortTypeAt n rest
+
+  -- Merge a witness for an already-present sort (cheap: scans the small
+  -- sort table, no `inferType`).  `addSort` on the same type hits and
+  -- `keepW`-merges the witness.
+  mergeW : ℕ → Maybe Term → St → St
+  mergeW s w st = case sortTypeAt s (St.sorts st) of λ where
+    (just ty) → proj₂ (addSort ty w st)
+    nothing   → st
+
   ----------------------------------------------------------------
   -- de Bruijn utilities.
   ----------------------------------------------------------------
@@ -336,10 +365,15 @@ private
           then error1 ("simp!: hidden arguments mention rule variables (polymorphic rule? use a monomorphic wrapper): " <+> show orig)
           else (do
             (es , st₁) ← convArgs depth pats st as
-            (r  , st₂) ← inferSort depth st₁ orig (witnessOf depth orig)
-            let im        = mkImpl depth hd as
-                (o , st₃) = addOp im (map RC.sortOf es) r st₂
-            return (RC.Expr.op o r es , st₃))
+            let im = mkImpl depth hd as
+            case findOpByImpl im (St.ops st₁) of λ where
+              -- Repeat operator: result sort already known, skip inferType;
+              -- still merge a witness this occurrence may supply.
+              (just (o , r)) → return (RC.Expr.op o r es , mergeW r (witnessOf depth orig) st₁)
+              nothing → do
+                (r  , st₂) ← inferSort depth st₁ orig (witnessOf depth orig)
+                let (o , st₃) = addOp im (map RC.sortOf es) r st₂
+                return (RC.Expr.op o r es , st₃))
 
     -- Converts the visible arguments only (structural recursion).
     convArgs : ℕ → List ℕ → St → Args Term → TC (List RC.Expr × St)
@@ -356,9 +390,14 @@ private
         true  → error1 ("simp!: opaque subterm mentions rule variables (unsupported): " <+> show t)
         false → do
           let t′ = strengthenBy depth t
-          (s , st₁) ← inferSort depth st t (just t′)
-          let (o , st₂) = addOp t′ [] s st₁
-          return (RC.Expr.op o s [] , st₂)
+          case findOpByImpl t′ (St.ops st) of λ where
+            -- Repeat atom: sort already known, skip inferType;
+            -- still merge this atom as a witness for its sort.
+            (just (o , s)) → return (RC.Expr.op o s [] , mergeW s (just t′) st)
+            nothing → do
+              (s , st₁) ← inferSort depth st t (just t′)
+              let (o , st₂) = addOp t′ [] s st₁
+              return (RC.Expr.op o s [] , st₂)
 
   ----------------------------------------------------------------
   -- Rule processing.

@@ -341,6 +341,23 @@ trusts the meta level; prefer features that keep that invariant.
    a full `inferType >>= normalise` where the head's result type is
    already known; (c) accept the cost and document a rule-count budget
    (≲ 10–15 rules/call) as the supported regime.
+
+   **UPDATE 2026-06-12 — lever (b) implemented, big win.** The fix was
+   not to reimplement type application, but to exploit the shared op
+   table: an operation's result sort is determined by its impl, and the
+   table is threaded across all rules and the goal, so a *repeat*
+   operator already has its result sort stored. `convApp`/`convAtom`
+   now look the impl up first (`findOpByImpl`, a cheap α-scan) and on a
+   hit reuse the stored sort, skipping `inferSort`'s
+   `inferType >>= normalise` entirely; `inferType` now runs once per
+   *distinct* operator instead of once per *occurrence*. (On a hit the
+   sort's witness is still merged via a cheap `addSort`, since
+   `inferSort`'s witness side-effect was load-bearing.) Result:
+   the 25-rule trivial-goal micro-bench dropped from ~48 s to ~0.7 s
+   (~67×); a realistic 10-rule closing goal runs at ~0.76 s. Confirms
+   the bottleneck was `inferType`-per-occurrence, exactly as the
+   corrected diagnosis predicted. The ~20-rule ceiling / 50-rule OOM is
+   gone for the common case (rules sharing operators).
 2. **Fuel as an option.** The 100-step budget is hard-coded in three
    places; chains needing more fail opaquely. Thread it through
    `TCOptions.fuel` (the `("reduceDec/constrs" , 5)` pattern already
