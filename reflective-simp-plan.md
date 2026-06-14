@@ -423,7 +423,11 @@ trusts the meta level; prefer features that keep that invariant.
 
 ### Tier 4 — Productization
 
-12. **`simp?`** — report which rules actually fired (engine returns
+12. **`simp?` — DONE 2026-06-12.** Reports which supplied rules fired
+    (Core `usedRules` mirrors `simplify` tracking fired indices; macro
+    maps indices→source Names, dedupes polymorphic expansions, throws a
+    `typeError` with the minimal `simp!` suggestion). Verified outputs
+    in Tests section J. WAS: report which rules actually fired (engine returns
     used-rule indices alongside the proof; macro prints the minimal
     call). Cheap in this architecture since the chain is data.
 13. **Verified relation chains**: replace `simpRel!`'s meta-level
