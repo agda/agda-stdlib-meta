@@ -221,12 +221,12 @@ private
     canonNumsArgs []             = []
     canonNumsArgs (arg i t ∷ as) = arg i (canonNums t) ∷ canonNumsArgs as
 
+    -- Canonicalise numeral spellings via the shared `extractNat`
+    -- (`zero`/`suc`-chains and literals all collapse to `lit (nat _)`).
     canonCon : Name → Args Term → Term
-    canonCon c [] =
-      if c == quote ℕ.zero then lit (nat 0) else con c []
-    canonCon c as@(arg _ (lit (nat n)) ∷ []) =
-      if c == quote ℕ.suc then lit (nat (suc n)) else con c as
-    canonCon c as = con c as
+    canonCon c as = case extractNat (con c as) of λ where
+      (just n) → lit (nat n)
+      nothing  → con c as
 
   -- Does t mention the free variable with (depth-adjusted) index i?
   mutual
@@ -293,15 +293,8 @@ private
   wrapLams zero    b = b
   wrapLams (suc n) b = `λ "x" ⇒ wrapLams n b
 
-  countVisible : Args Term → ℕ
-  countVisible []                                  = 0
-  countVisible (arg (arg-info visible _) _ ∷ as)   = suc (countVisible as)
-  countVisible (_ ∷ as)                            = countVisible as
-
-  filterVisible : Args Term → List Term
-  filterVisible []                                 = []
-  filterVisible (arg (arg-info visible _) t ∷ as)  = t ∷ filterVisible as
-  filterVisible (_ ∷ as)                           = filterVisible as
+  -- (`visibleCount` / `vArgs` / `extractNat` / `mapVars` come from the
+  -- shared `Reflection.Utils`.)
 
   anyHiddenOpen : ℕ → Args Term → Bool
   anyHiddenOpen depth []                                 = false
@@ -311,17 +304,10 @@ private
 
   -- First/last visible argument of an application's arg list.
   firstVisibleArg : Args Term → Maybe Term
-  firstVisibleArg []                                = nothing
-  firstVisibleArg (arg (arg-info visible _) t ∷ _)  = just t
-  firstVisibleArg (_ ∷ as)                          = firstVisibleArg as
+  firstVisibleArg as = vArgs as ⁉ 0
 
   lastVisibleArg : Args Term → Maybe Term
-  lastVisibleArg = go nothing
-    where
-      go : Maybe Term → Args Term → Maybe Term
-      go acc []                                 = acc
-      go acc (arg (arg-info visible _) t ∷ as)  = go (just t) as
-      go acc (_ ∷ as)                           = go acc as
+  lastVisibleArg as = let xs = vArgs as in xs ⁉ (length xs ∸ 1)
 
   -- Should this application's first visible arg be dropped as the
   -- bundle?  Yes iff the goal has a bundle `M` and the arg (strengthened
@@ -341,7 +327,7 @@ private
   mkImpl depth dropFst hd as = wrapLams n (rebuild hd (go 0 false as))
     where
       n : ℕ
-      n = countVisible as ∸ (if dropFst then 1 else 0)
+      n = visibleCount as ∸ (if dropFst then 1 else 0)
 
       go : ℕ → Bool → Args Term → Args Term
       go k seen []                                   = []
@@ -393,7 +379,7 @@ private
     convApp : ℕ → List ℕ → St → (orig hd : Term) → Args Term
             → TC (RC.Expr × St)
     convApp depth pats st orig hd as =
-      case countVisible as of λ where
+      case visibleCount as of λ where
         0 → convAtom depth st orig
         _ → if anyHiddenOpen depth as
           then error1 ("simp!: hidden arguments mention rule variables (polymorphic rule? use a monomorphic wrapper): " <+> show orig)
@@ -918,13 +904,13 @@ private
   -- visible ones; we match on visibility and take the visible args.
   ----------------------------------------------------------------
 
-  -- Fueled (the recursion descends `filterVisible` output, which Agda
+  -- Fueled (the recursion descends `vArgs` output, which Agda
   -- does not see as structural).
   unquoteHypList : ℕ → Term → TC (List Term)
   unquoteHypList 0        _ = error1 "simpH!: hypothesis list too long"
   unquoteHypList (suc fl) (con c args) =
     if c == quote List._∷_
-      then (case filterVisible args of λ where
+      then (case vArgs args of λ where
         (h ∷ tl ∷ []) → do
           rest ← unquoteHypList fl tl
           return (h ∷ rest)
@@ -945,7 +931,7 @@ private
   unquoteHyps 0 _ = error1 "simpH!: hypothesis tuple too deep"
   unquoteHyps (suc fl) t@(con c args) =
     if c == quote _,_
-      then (case filterVisible args of λ where
+      then (case vArgs args of λ where
         (a ∷ b ∷ []) → do
           rest ← unquoteHyps fl b
           return (a ∷ rest)
