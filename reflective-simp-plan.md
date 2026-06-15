@@ -418,20 +418,26 @@ trusts the meta level; prefer features that keep that invariant.
    change, `--safe` intact.  Conditions detected as trailing binders unused
    in the body (`condCount`).
    - **Discharge = `Class.Decidable` instance resolution** (option B, the
-     user's choice over a builtin-decider registry).  The macro emits a
-     top-level helper `prove : ⦃ P ⁇ ⦄ {True (dec …)} → P` for each premise;
-     Agda infers the proposition `P` from the lemma's premise type, resolves
-     a `Class.Decidable._⁇` instance (ℕ/ℤ/ℚ `_≤_`/`_<_`, any `_≡_` over a
-     `DecEq` type; user-extensible), and the `True (dec …)` argument forces
+     user's choice over a builtin-decider registry).  For a premise `P` the
+     macro resolves a `Class.Decidable._⁇` instance (ℕ/ℤ/ℚ `_≤_`/`_<_`, any
+     `_≡_` over a `DecEq` type; user-extensible) and discharges with
+     `toWitness {a? = ¿ P ¿ ⦃ inst ⦄} _`, whose `True (dec …)` argument forces
      the decision to `yes`.  A **raw** propositional premise such as `m ≤ n`
-     is therefore discharged with NO `T`-wrapper — the unmodified stdlib
-     `m≤n⇒m⊓n≡m` works directly.  Tests ck₁/ck₂.
-   - **False conditions** leave `prove`'s `True (dec …) = ⊥` as an UNSOLVED
-     meta (Agda postpones rather than erroring; the framework's
+     is therefore discharged with NO `T`-wrapper.
+   - **The instance MUST be resolved explicitly** (`findInstances (P ⁇)`),
+     not left to a bare `prove : ⦃ P ⁇ ⦄ …` helper.  A bare helper's `⦃ P ⁇ ⦄`
+     is a *deferred* instance meta at macro time, so the `findMetas` guard
+     (below) rejects the rule even for a TRUE condition — silently disabling
+     the whole by-decision path.  This went unnoticed for a while because
+     the test operator `_⊓_` computes, so `3 ⊓ 5 ≡ 3` closed via the
+     definitional fallback regardless; a genuine by-decision test needs an
+     OPAQUE operator (`CondTests.agda`, `_⊕_` postulate).  Fixed 2026-06-15.
+   - **False conditions** leave the `True (dec …) = ⊥` argument as an
+     UNSOLVED meta (Agda postpones rather than erroring; the framework's
      `noConstraints` only sets an unread `TCEnv` flag — a no-op).  The fix:
      `checkType` the elaborated application and reject any `findMetas` ≠ []
      → candidate skipped → clean "failed to close" instead of a leaked
-     unsolved meta.  See NOTES pitfall on `noConstraints`/`findMetas`.
+     unsolved meta.  See NOTES pitfall 13.
    - **Symbolic premises — DONE (discharge by assumption) 2026-06-14.**
      The earlier note ("symbolic conditions need an Env-threaded `csound` +
      ρ₀-grounded engine") was WRONG for the case that matters.  Key fact:
@@ -446,15 +452,23 @@ trusts the meta level; prefer features that keep that invariant.
      context (`getContext` — call-site hyps live in `globalContext`, NOT
      `getLocalContext`) for a variable of that exact type and emits
      `var i []`.  No engine change, `--safe` intact.  Order: by assumption,
-     then by decision (`prove`); `findMetas` guard rejects undischarged
-     premises.  Tests sk₁/sk₂.
-   - REMAINING LIMITATION (genuinely engine-shaped, rare): a conditional
-     rule fires only on operands PRESENT IN THE GOAL — a premise for a redex
-     that only materialises after other rewrites isn't discharged (the macro
-     can't pre-instantiate it).  THAT case still needs conditions threaded
-     through the engine rewrite loop (Env-threaded `csound` + ρ₀-grounding)
-     and remains research; candidate-enrichment (item 10) widens the
-     pre-instantiation pool somewhat.
+     then by decision; `findMetas` guard rejects undischarged premises.
+     Tests sk₁/sk₂ (and `CondTests.agda` byAsm₁ over an opaque op).
+   - REMAINING LIMITATION (genuinely engine-shaped): a conditional rule
+     fires only on operands PRESENT IN THE GOAL — a premise for a redex that
+     only materialises after other rewrites isn't discharged (the macro
+     can't pre-instantiate it).  Demonstrated in `CondTests.agda` (commented
+     `resid`): goal `g x ⊕ 5 ≡ 3`, where `3 ⊕ 5` appears only after `g-eq`
+     rewrites the inner `g x` IN CONTEXT, with `_⊕_` opaque so the
+     definitional fallback can't help.  Note `_⊓_`-style operators never
+     exhibit this — they compute, so a materialised `a ⊓ b` is closed by the
+     fallback; the residual needs an operator that does real (non-
+     definitional) work AND a non-goal-present redex.  Enrichment (item 10)
+     cannot reach it either: it emits rule-RHS instances as standalone terms
+     and never performs in-context (congruence) rewriting, so it produces
+     g-eq's RHS `3`, never the reconstructed `3 ⊕ 5`.  THAT case needs
+     conditions threaded through the engine rewrite loop (Env-threaded
+     `csound` + ρ₀-grounding) and remains research.
 10. **Goals beyond ≡ and registered relations**: boolean goals (`T b`,
     `b ≡ true` via `decide`-style closure) — the original TODO at the
     top of old `Tactic.Simp`.

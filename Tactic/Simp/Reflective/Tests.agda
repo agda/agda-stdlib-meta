@@ -510,6 +510,10 @@ gJ₄ = simp! []
 -- `m≤n⇒m⊓n≡m : m ≤ n → m ⊓ n ≡ m` is the *unmodified* stdlib lemma —
 -- its `m ≤ n` premise is decided automatically (`_≤_` over ℕ has a
 -- `Class.Decidable._⁇` instance), with no boolean wrapper.
+-- NB: `_⊓_` *computes*, so `3 ⊓ 5 ≡ 3` is also closed by the definitional
+-- fallback alone — this case does not isolate the by-decision discharge.
+-- For a GENUINE by-decision test (over an opaque operator that cannot be
+-- closed by computation), see `CondTests.agda`.
 ck₁ : 3 ⊓ 5 ≡ 3
 ck₁ = simp! (quote m≤n⇒m⊓n≡m ∷ [])
 

@@ -42,7 +42,7 @@
 module Tactic.Simp.Reflective where
 
 open import Class.DecEq
-open import Class.Decidable using (_⁇)
+open import Class.Decidable using (_⁇; ¿_¿)
 open import Class.Functor
 open import Class.MonadReader.Instances
 open import Class.MonadTC.Instances
@@ -60,7 +60,7 @@ open import Data.Product hiding (map; zip)
 open import Function
 
 open import Relation.Binary.PropositionalEquality
-open import Relation.Nullary.Decidable using (toWitness; True)
+open import Relation.Nullary.Decidable using (toWitness)
 
 open import Meta.Init
 open import Meta.Prelude
@@ -96,19 +96,6 @@ record Simp (D : Set) : Set where
 record RelInfo : Set where
   constructor mkRelInfo
   field relTrans relRefl : Name
-
--- Discharge term for the side-conditions of a conditional rule.  For a
--- premise of type `P`, the macro emits `prove` (everything implicit): Agda
--- infers `P` from the lemma's premise type, resolves a `Class.Decidable._⁇`
--- instance — e.g. `_≤_`, `_<_` (ℕ/ℤ/ℚ) or any `_≡_` over a `DecEq` type —
--- and the `True (dec …)` argument forces the decision to compute to `yes`,
--- i.e. the side-condition must actually hold (otherwise the application is
--- ill-typed and the rule simply does not fire there).  This is what lets a
--- *raw* propositional premise such as `m ≤ n` be discharged automatically,
--- with no `T`-wrapper.  Callers must have the relevant `_⁇` instances in
--- scope (e.g. `open import Class.Decidable`).
-prove : ∀ {ℓ} {P : Set ℓ} ⦃ d : P ⁇ ⦄ {pf : True (_⁇.dec d)} → P
-prove ⦃ d ⦄ {pf} = toWitness pf
 
 private
 
@@ -886,6 +873,29 @@ private
   -- not).  If no assumption fits, fall back to `prove` (decide it via a
   -- `Class.Decidable._⁇` instance, e.g. a ground `3 ≤ 5`).  An undischarged
   -- premise leaves a meta that the caller's `findMetas` guard rejects.
+  -- Decide a condition `dom` via a `Class.Decidable._⁇` instance.  We
+  -- resolve the instance EXPLICITLY with `findInstances` and bake it in
+  -- (`¿ dom ¿ ⦃ inst ⦄`) rather than emitting a bare `prove`: a bare
+  -- `prove` leaves the instance argument as a *deferred* meta, which the
+  -- caller's `findMetas` guard then rejects even for a *true* condition
+  -- (the instance only resolves at the final elaboration).  With the
+  -- instance baked in, the only remaining argument is `True (dec …)`,
+  -- which eta-solves to `tt` for a true decision and is the unsolvable
+  -- `⊥` (correctly rejected) for a false one.
+  byDecision : Term → TC Term
+  byDecision dom =
+    catch (do
+      (inst ∷ _) ← findInstances (def (quote _⁇) (hArg unknown ∷ vArg dom ∷ []))
+        where [] → return unknown   -- no instance → meta → rejected by guard
+      -- toWitness {a}{A}{a? = ¿ dom ¿ ⦃ inst ⦄} _ : dom.  Three implicits
+      -- precede the visible `True a?` argument.
+      return (def (quote toWitness)
+                (hArg unknown                                                  -- a (level)
+                 ∷ hArg dom                                                    -- A (the prop)
+                 ∷ hArg (def (quote ¿_¿) (hArg unknown ∷ vArg dom ∷ iArg inst ∷ []))  -- a? = ¿ dom ¿ ⦃inst⦄
+                 ∷ vArg unknown ∷ [])))                                        -- True a? (eta ⊤ / ⊥)
+      (λ _ → return unknown)
+
   dischargeCond : Term → TC Term
   dischargeCond dom = do
     -- `getContext` (local binders the macro entered ++ the call-site
@@ -895,7 +905,7 @@ private
     go (length ctx) 0
     where
       go : ℕ → ℕ → TC Term
-      go zero    _ = return (def (quote prove) [])
+      go zero    _ = byDecision dom
       go (suc k) i =
         catch (checkType (var i []) dom >> return (var i []))
               (λ _ → go k (suc i))

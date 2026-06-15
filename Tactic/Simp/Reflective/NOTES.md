@@ -125,22 +125,35 @@ these four rules before touching anything else.
     meta-level `normalise` takes minutes (no sharing).  Bound the size
     first and summarize when large.
 
-13. **`noConstraints` is a no-op in this framework; use `findMetas` to
-    detect undischarged side conditions** — the conditional-rule discharge
-    emits `prove : ⦃ P ⁇ ⦄ {True (dec …)} → P` for each premise.  When the
-    condition is FALSE the `True (dec …)` argument has type `⊥`; Agda does
-    not error there — it POSTPONES the unsolved meta, which then leaks into
-    the macro's emitted proof and surfaces as a confusing top-level
-    "Unsolved metavariables".  The framework's `Class.MonadTC.noConstraints`
-    does NOT help: it only sets an unread `TCEnv.noConstraints` flag (the
-    `MonadTC-TC`/`-TCI` instances call the raw `R.checkType` primitive and
-    never wrap it in the primitive `R.noConstraints`).  The working pattern:
-    `checkType` the elaborated application, then reject any candidate whose
-    result has `findMetas ≢ []` (re-exported by `Reflection.Utils`).  An
-    unsolvable `⊥`-meta stays a `meta` node in that term, so this cleanly
-    skips the rule (→ "failed to close the goal") rather than leaking it.
-    `inferType` alone is insufficient — it returns the result type without
-    forcing the term's metas.
+13. **`noConstraints` is a no-op here; reject undischarged conditions with
+    `findMetas`, but resolve instances EXPLICITLY first** — the conditional
+    discharge applies the rule to a proof of each premise and then rejects
+    the candidate if `findMetas ≢ []` on the elaborated application
+    (re-exported by `Reflection.Utils`).  Two pitfalls compound here:
+    - When a condition is FALSE the proof's `True (dec …)` argument has type
+      `⊥`; Agda does not error, it POSTPONES the unsolved meta (which would
+      otherwise leak as a confusing top-level "Unsolved metavariables").
+      Keeping it as a `meta` node is exactly why the `findMetas` reject
+      works.  `Class.MonadTC.noConstraints` does NOT help force it: it only
+      sets an unread `TCEnv.noConstraints` flag (the `MonadTC-TC`/`-TCI`
+      instances call the raw `R.checkType` primitive, never the primitive
+      `R.noConstraints`).  `inferType` alone is also insufficient — it
+      returns the result type without forcing the term's metas; `checkType`
+      the application instead.
+    - DO NOT discharge by emitting a bare instance-resolved helper (e.g.
+      `prove : ⦃ P ⁇ ⦄ {True (dec …)} → P`).  Its `⦃ P ⁇ ⦄` argument is a
+      *deferred* instance meta at macro time — it only resolves at the final
+      elaboration — so `findMetas` sees it and rejects the rule even for a
+      TRUE condition.  This silently disabled the whole by-decision path;
+      it went unnoticed because the test operator `_⊓_` computes, so
+      `3 ⊓ 5 ≡ 3` closed via the definitional fallback regardless (a real
+      by-decision test needs an OPAQUE operator — see `CondTests.agda`).
+      Fix: resolve the instance yourself with `findInstances (P ⁇)` and bake
+      it in (`toWitness {a? = ¿ P ¿ ⦃ inst ⦄} _`), leaving only the
+      `True (dec …)` meta — which eta-solves to `tt` when true and stays the
+      `⊥`-meta (correctly rejected) when false.  NB `toWitness` has three
+      implicits `{a}{A}{a?}` before its visible argument; the `Dec` goes in
+      the third slot.
 
 14. **`getLocalContext` is empty at a macro's call site — use `getContext`
     to reach the caller's hypotheses** — `initTCEnvWithGoal` seeds
