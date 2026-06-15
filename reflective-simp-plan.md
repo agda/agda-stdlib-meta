@@ -1,13 +1,42 @@
 # Reflective simp: roadmap
 
-Status: `Tactic.Simp.Reflective` proves ≡-goals with a single `simp!` call —
-multi-sorted, raw polymorphic stdlib rules, verified-by-construction core
-(`--safe`, no `--lossy-unification`), 24 tests, ~20 s clean check.
+Status: `Tactic.Simp.Reflective` proves ≡-goals (and non-≡ relation goals)
+with a single macro call — multi-sorted, raw polymorphic stdlib rules,
+mixed universe levels, ordered rewriting, local hypotheses, instance
+dictionaries, abstract algebraic-bundle relations, and conditional rules;
+verified-by-construction core (`--safe`, no `--lossy-unification`).  Macros:
+`simp!`, `simpD!`, `simpH!`, `simpRel!`/`simpRelH!`/`simpRelD!`, `simp?`.
+Tests: `Tests.agda` (sections A–K), `CondTests.agda`, `CoreCondTest.agda`.
 
-Guiding principle that has paid off twice: the engine never trusts the
+Guiding principle that has paid off repeatedly: the engine never trusts the
 meta level. Matchers and heuristics may be wrong; the worst outcome is a
 type error or a rule that never fires. Keep every new feature on that side
 of the line.
+
+## Current state (2026-06-15) — roadmap essentially complete
+
+The Tier 1–4 plan below is the live roadmap (the original Phase 0–4 items
+were folded into it).  Nearly everything is DONE; what remains:
+
+- **Blocked (documented):** `⊆` / relations defined as plain functions
+  (item 4) — `inferType` pre-unfolds them to their Π-definition before the
+  reifier sees a head.
+- **Skipped (low effort if wanted):** boolean `T b` goals (item 10) —
+  `b ≡ true` already works; `T b` is a thin frontend wrapper.
+- **Deferred research:** rewriting under binders (item 11) — needs a
+  binder-aware engine + funext, unavailable under `--safe`.
+- **Productization:** verified relation chains via `Witness.Chain`
+  (item 13, internal cleanup) and maintainer decisions — naming,
+  upstreaming (item 14).
+
+Conditional rules (item 9) are now COMPLETE, including the in-engine
+materialised-redex case (`CondRule` + the frontend fire-builder).  SCOPE
+caveats on that work: the fire-builder handles a single decidable premise
+over ℕ-sorted operands with no polymorphic parameters (others fall back to
+the goal-present macro-time discharge and are not added as `CondRule`s);
+`CondRule`s are threaded only into the `simp!` ≡-path (not `simpRel!` or the
+error-rendering `normalForm`); by-assumption discharge on a *materialised*
+redex is not handled (only by-decision).  See item 9 for detail.
 
 ## Phase 0 — Housekeeping (do first, ~an hour)
 
