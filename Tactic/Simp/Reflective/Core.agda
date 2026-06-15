@@ -31,7 +31,7 @@
 module Tactic.Simp.Reflective.Core where
 
 open import Level using (Level; Lift; lift) renaming (suc to ℓsuc)
-open import Data.Empty   using (⊥-elim)
+open import Data.Empty   using (⊥; ⊥-elim)
 open import Data.List    using (List; []; _∷_)
 open import Data.Bool    using (Bool; true; false)
 open import Data.Maybe   using (Maybe; just; nothing)
@@ -39,7 +39,7 @@ open import Data.Nat     using (ℕ; zero; suc; _<ᵇ_; _+_)
 open import Data.Nat.Properties using (_≟_)
 open import Data.Product using (Σ; _×_; _,_; proj₁; proj₂)
 open import Data.Unit    using (⊤; tt)
-open import Relation.Nullary using (yes; no; ¬_)
+open import Relation.Nullary using (Dec; yes; no; ¬_)
 open import Relation.Binary.PropositionalEquality
   using (_≡_; _≢_; refl; sym; trans; cong; subst)
 
@@ -194,6 +194,36 @@ mutual
   ... | nothing = nothing
   matchs []      (_ ∷ _) _ = nothing
   matchs (_ ∷ _) []      _ = nothing
+
+----------------------------------------------------------------
+-- Closedness (var-freeness).  Goal-side expressions and rules
+-- instantiated from the goal are var-free; `eval` of a closed
+-- expression is environment-independent (see `eval-closed` below),
+-- which lets a conditional step decided at one environment be lifted
+-- to all environments.  Closedness is *checked* at firing time with
+-- `closed?` rather than tracked as an engine invariant.
+----------------------------------------------------------------
+
+mutual
+  Closed : Expr → Set
+  Closed (var _ _)   = ⊥
+  Closed (op _ _ es) = ClosedL es
+
+  ClosedL : List Expr → Set
+  ClosedL []       = ⊤
+  ClosedL (e ∷ es) = Closed e × ClosedL es
+
+mutual
+  closed? : (e : Expr) → Dec (Closed e)
+  closed? (var _ _)   = no λ ()
+  closed? (op _ _ es) = closedL? es
+
+  closedL? : (es : List Expr) → Dec (ClosedL es)
+  closedL? []       = yes tt
+  closedL? (e ∷ es) with closed? e | closedL? es
+  ... | yes p | yes q = yes (p , q)
+  ... | no ¬p | _     = no λ where (p , _) → ¬p p
+  ... | _     | no ¬q = no λ where (_ , q) → ¬q q
 
 ----------------------------------------------------------------
 -- Sort interpretation, casting, and operation types.
@@ -500,6 +530,109 @@ module Eval {ℓ} (Ts : List (Pointed ℓ)) (ops : List (WithSorts.Op Ts)) where
   simplifyEq : (g : ℕ) (n : ℕ) (rs : Rules) (e : Expr)
              → evalAt g ρ₀ e ≡ evalAt g ρ₀ (normalForm n rs e)
   simplifyEq g n rs e = proj₂ (simplify n (prioritize rs) e) g ρ₀
+
+  ----------------------------------------------------------------
+  -- Conditional rules.
+  --
+  -- A `CondRule` is a rule whose soundness is *partial*: `fire τ` returns
+  -- `just proof` when the side condition holds at the environment `τ`, and
+  -- `nothing` when it does not (so the rule does not fire there).  This is
+  -- the verified core of the side-condition feature; the macro frontend
+  -- builds `fire` (deciding the condition on the matched values, via a
+  -- `Class.Decidable` instance or a context hypothesis).
+  --
+  -- DESIGN NOTE.  This is the "Closed" variant: we keep the existing
+  -- ∀-environment `EStep`/engine and recover the closed-term property that
+  -- a conditional step needs by *checking* it at firing time (`closed?`)
+  -- and transporting across environments (`eval-closed`).  The alternative
+  -- — the design used by the MIT-PLV verified reflective rewriter, where
+  -- rules are `option`-returning and the term representation is closed by
+  -- construction (so no `eval-closed`/`closed?` is needed) — is documented
+  -- in:  Gross, Erbsen, Poddar-Agrawal, Philipoom, Chlipala, "Accelerating
+  -- Verified-Compiler Development with a Verified Rewriting Engine", ITP
+  -- 2022 (DOI 10.4230/LIPIcs.ITP.2022.17; repo github.com/mit-plv/rewriter,
+  -- the `rew_with_opt` rules).  Switch to that if we ever index `Expr` by
+  -- its variable context instead of carrying `var`/`Env` openly.
+  ----------------------------------------------------------------
+
+  -- `eval` of a closed expression does not depend on the environment.
+  -- (`e` is explicit: `Closed` is a reducing function, so the index is not
+  -- recoverable from `Closed e` by unification.)
+  mutual
+    eval-closed : (e : Expr) → Closed e → (ρ ρ′ : Env) → eval ρ e ≡ eval ρ′ e
+    eval-closed (var _ _)   ()
+    eval-closed (op o s es) cl ρ ρ′ =
+      cong (cast (resSort o) s)
+        (applyE-closed (argSorts o) (resSort o) (impl o) es cl ρ ρ′)
+
+    evalAt-closed : (e : Expr) → Closed e → (s : ℕ) (ρ ρ′ : Env)
+                  → evalAt s ρ e ≡ evalAt s ρ′ e
+    evalAt-closed e cl s ρ ρ′ = cong (cast (sortOf e) s) (eval-closed e cl ρ ρ′)
+
+    applyE-closed : ∀ as r (f : Fun as r) es → ClosedL es → (ρ ρ′ : Env)
+                  → applyE ρ as r f es ≡ applyE ρ′ as r f es
+    applyE-closed []       r v _        _          ρ ρ′ = refl
+    applyE-closed (a ∷ as) r f []       _          ρ ρ′ =
+      applyE-closed as r (f (default a)) [] tt ρ ρ′
+    applyE-closed (a ∷ as) r f (e ∷ es) (ce , ces) ρ ρ′ =
+      trans (cong (λ x → applyE ρ as r (f x) es) (evalAt-closed e ce a ρ ρ′))
+            (applyE-closed as r (f (evalAt a ρ′ e)) es ces ρ ρ′)
+
+  record CondRule : Set ℓ where
+    constructor mkCondRule
+    field
+      lhs rhs : Expr
+      sEq     : sortOf rhs ≡ sortOf lhs
+      fire    : (τ : Env)
+              → Maybe (evalAt (sortOf lhs) τ lhs ≡ evalAt (sortOf lhs) τ rhs)
+
+  -- Lift a base equality at the rule's own sort to all target sorts —
+  -- exactly `soundAt`, but taking the proof as an argument (so it can come
+  -- from `fire`) instead of from a `Rule.sound` field.
+  csoundAt : (l r : Expr) → sortOf r ≡ sortOf l → (τ : Env)
+           → evalAt (sortOf l) τ l ≡ evalAt (sortOf l) τ r
+           → ∀ s → evalAt s τ l ≡ evalAt s τ r
+  csoundAt l r sEq τ base s with s ≟ sortOf l
+  ... | yes p = subst (λ z → evalAt z τ l ≡ evalAt z τ r) (sym p) base
+  ... | no ¬p =
+        trans (cast-diff (λ q → ¬p (sym q)) (eval τ l))
+              (sym (cast-diff (λ q → ¬p (sym (trans (sym sEq) q))) (eval τ r)))
+
+  -- The verified conditional step.  `base` is `fire`'s witness at the
+  -- matched environment `substVar ρ₀ σ`; `ecl`/`rcl` witness that the redex
+  -- and its replacement are closed.  The proof decides the condition at
+  -- `ρ₀` (mirroring `mkStep`) and the two `evalAt-closed` wings transport
+  -- that `ρ₀`-equation out to an arbitrary `ρ`, recovering a full `EStep`.
+  mkCondStep : (cr : CondRule) (σ : Subst) (e : Expr)
+             → applyS σ (CondRule.lhs cr) ≡ e
+             → Closed e → Closed (applyS σ (CondRule.rhs cr))
+             → evalAt (sortOf (CondRule.lhs cr)) (substVar ρ₀ σ) (CondRule.lhs cr)
+             ≡ evalAt (sortOf (CondRule.lhs cr)) (substVar ρ₀ σ) (CondRule.rhs cr)
+             → Step e
+  mkCondStep cr σ e eq ecl rcl base =
+    applyS σ (CondRule.rhs cr)
+    , λ s ρ → trans (evalAt-closed e ecl s ρ ρ₀)
+              (trans (p₀ s) (evalAt-closed (applyS σ (CondRule.rhs cr)) rcl s ρ₀ ρ))
+    where
+      p₀ : ∀ s → evalAt s ρ₀ e ≡ evalAt s ρ₀ (applyS σ (CondRule.rhs cr))
+      p₀ s = trans (cong (evalAt s ρ₀) (sym eq))
+             (trans (subst-eval s ρ₀ σ (CondRule.lhs cr))
+             (trans (csoundAt (CondRule.lhs cr) (CondRule.rhs cr) (CondRule.sEq cr)
+                       (substVar ρ₀ σ) base s)
+                    (sym (subst-eval s ρ₀ σ (CondRule.rhs cr)))))
+
+  -- Try a conditional rule: match, re-check the match, confirm the redex
+  -- and replacement are closed, and decide the side condition via `fire`.
+  tryRuleC : CondRule → (e : Expr) → Maybe (Step e)
+  tryRuleC cr e with match (CondRule.lhs cr) e []
+  ... | nothing = nothing
+  ... | just σ with eqExpr? (applyS σ (CondRule.lhs cr)) e
+  ...   | nothing = nothing
+  ...   | just eq with closed? e
+                     | closed? (applyS σ (CondRule.rhs cr))
+                     | CondRule.fire cr (substVar ρ₀ σ)
+  ...     | yes ecl | yes rcl | just base = just (mkCondStep cr σ e eq ecl rcl base)
+  ...     | _       | _       | _         = nothing
 
   ----------------------------------------------------------------
   -- Rule-usage diagnostics (for `simp?`).  This re-runs the SAME

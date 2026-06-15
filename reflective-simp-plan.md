@@ -467,8 +467,29 @@ trusts the meta level; prefer features that keep that invariant.
      cannot reach it either: it emits rule-RHS instances as standalone terms
      and never performs in-context (congruence) rewriting, so it produces
      g-eq's RHS `3`, never the reconstructed `3 ⊕ 5`.  THAT case needs
-     conditions threaded through the engine rewrite loop (Env-threaded
-     `csound` + ρ₀-grounding) and remains research.
+     conditions carried through the engine rewrite loop and decided at
+     firing time.
+   - **Engine extension — Core building blocks DONE ("Closed" variant)
+     2026-06-15.** Core now has the verified machinery for in-engine
+     conditional rules (`--safe`, additive — existing engine untouched):
+     `Closed`/`closed?` (var-freeness, decidable); `eval-closed`/
+     `evalAt-closed` (eval of a closed Expr is environment-independent —
+     the one new lemma); a `CondRule` record whose soundness is partial
+     (`fire : (τ : Env) → Maybe (evalAt … lhs ≡ evalAt … rhs)`); `csoundAt`
+     (off-sort lift of `fire`'s witness, = `soundAt` parameterised on the
+     proof); `mkCondStep`/`tryRuleC`, which decide the condition at `ρ₀`
+     and lift the `ρ₀`-equation to a full ∀ρ `EStep` by sandwiching with
+     `eval-closed` (closedness obtained from a LOCAL `closed?` check, not a
+     threaded invariant).  The `mkCondStep` soundness proof typechecks, so
+     the design is verified.  This is the "Closed" variant; the
+     by-construction-closed alternative (MIT-PLV ITP'22 `option`-returning
+     rules) is referenced in a `Core.agda` design note in case we switch.
+     STILL TODO: wire `tryRuleC` into `tryRules`/`simplify`/`solve` (thread
+     `List CondRule` alongside `Rules` without disturbing existing callers),
+     and the frontend `fire`-builder (synthesise `fire` as a τ-indexed
+     quoted term from a `Class.Decidable` instance / context hypothesis,
+     with sort casts) — the fiddly, risk-bearing part; plus an end-to-end
+     test (CondTests `resid` should flip to passing).
 10. **Goals beyond ≡ and registered relations**: boolean goals (`T b`,
     `b ≡ true` via `decide`-style closure) — the original TODO at the
     top of old `Tactic.Simp`.
