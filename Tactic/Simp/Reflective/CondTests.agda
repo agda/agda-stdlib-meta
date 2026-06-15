@@ -53,21 +53,25 @@ byAsm₁ : ∀ {m n : ℕ} → m ≤ n → m ⊕ n ≡ m
 byAsm₁ _ = simp! (quote ⊕-le ∷ [])
 
 ----------------------------------------------------------------
--- LIMITATIONS (kept commented; each fails by design).
+-- MATERIALISED redex (was the open residual; now handled in-engine).
+----------------------------------------------------------------
+
+-- `3 ⊕ 5` appears nowhere in the goal `g x ⊕ 5 ≡ 3`; it materialises only
+-- after `g-eq` rewrites the inner `g x → 3` IN CONTEXT.  The macro cannot
+-- pre-instantiate `⊕-le` for it (no goal candidate, no `3 ≤ 5` in scope),
+-- but the engine now carries it as a `CondRule` and decides the premise at
+-- firing time (`3 ≤ 5`, once the operands are normalised).
+resid : ∀ {x : ℕ} → g x ⊕ 5 ≡ 3
+resid = simp! (quote g-eq ∷ quote ⊕-le ∷ [])
+
+----------------------------------------------------------------
+-- LIMITATIONS (kept commented; each fails cleanly, "failed to close").
 ----------------------------------------------------------------
 
 -- False ground condition: 5 ≤ 3 does not hold, so ⊕-le must not fire.
 --   bad : 5 ⊕ 3 ≡ 5
---   bad = simp! (quote ⊕-le ∷ [])        -- "failed to close the goal"
-
--- Side condition on a MATERIALISED redex (the open residual).  `3 ⊕ 5`
--- appears nowhere in the goal `g x ⊕ 5 ≡ 3`; it materialises only after
--- `g-eq` rewrites the inner `g x → 3` IN CONTEXT.  So ⊕-le is never
--- instantiated for it (it is no goal candidate, and `3 ≤ 5` is neither in
--- the goal nor in scope to discharge by assumption).  Provable by hand as
--- `trans (cong (_⊕ 5) (g-eq x)) (⊕-le {3} {5} _)`, but not by simp.
--- Discharging this needs the *engine* to carry conditional rules and decide
--- the premise at firing time — a `--safe` Core extension, not a frontend
--- pre-pass.
---   resid : ∀ {x : ℕ} → g x ⊕ 5 ≡ 3
---   resid = simp! (quote g-eq ∷ quote ⊕-le ∷ [])   -- stuck at `3 ⊕ 5`
+--   bad = simp! (quote ⊕-le ∷ [])
+-- Abstract operands with no assumption: the premise `m ≤ n` is neither
+-- decidable nor available, so the rule cannot fire.
+--   nope : ∀ {m n : ℕ} → m ⊕ n ≡ m
+--   nope = simp! (quote ⊕-le ∷ [])

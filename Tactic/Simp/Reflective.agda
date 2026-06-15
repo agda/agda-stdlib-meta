@@ -954,6 +954,89 @@ private
     (rs , st₂) ← processCondAssigns gh n vI cI st₁ vs
     return ((case mr of λ where (just r) → r ∷ rs ; nothing → rs) , st₂)
 
+  ----------------------------------------------------------------
+  -- Conditional rules as engine `CondRule`s (decided at firing time).
+  -- This complements `processCondAssign` (which discharges goal-present
+  -- instances at macro time): a `CondRule` also fires on redexes that only
+  -- materialise during rewriting.  Scope: a single decidable premise over
+  -- ℕ-sorted operands, no polymorphic parameters; otherwise `nothing`.
+  ----------------------------------------------------------------
+
+  -- `ℕ → ℕ → ℕ` quoted, for the fake `τ` used to read off a premise type.
+  funℕℕℕT : Term
+  funℕℕℕT = pi (vArg (def (quote ℕ) [])) (abs "_"
+              (pi (vArg (def (quote ℕ) [])) (abs "_" (def (quote ℕ) []))))
+
+  -- τ-values of the value binders: binder k (of a D-binder telescope, with
+  -- engine sort sₖ) is engine variable D∸1∸k, read as `τ sₖ (D∸1∸k)`.
+  -- `τdb` is τ's de Bruijn index in the current scope.
+  condTvals : ℕ → ℕ → List (ArgInfo × ℕ) → Args Term
+  condTvals D τdb valIs = zipWithIndex
+    (λ k p → arg (proj₁ p)
+       (var τdb (vArg (`ℕ (proj₂ p)) ∷ vArg (`ℕ (D ∸ 1 ∸ k)) ∷ [])))
+    valIs
+
+  -- A `CondRule`'s `fire` (see `Core.decToFire`):
+  --   λ τ → decToFire ¿ condDom ¿ ⦃ inst ⦄ (λ p → n <value τ-vals> p)
+  -- The `_⁇` instance is BAKED IN (resolved at macro time), not left as a
+  -- deferred meta: otherwise the macro's pre-run of the solver cannot reduce
+  -- the decision, so it can neither close the goal nor report failure.
+  mkFireTerm : Name → ℕ → List (ArgInfo × ℕ) → ArgInfo → Term → Term → Term
+  mkFireTerm n D valIs ci condDom instT =
+    `λ "τ" ⇒
+      def (quote RC.decToFire)
+        ( vArg (def (quote ¿_¿) (vArg condDom ∷ iArg instT ∷ []))
+        ∷ vArg (lam visible (abs "p"
+            (def n (condTvals D 1 valIs ++ (arg ci (var 0 []) ∷ [])))))
+        ∷ [] )
+
+  processCondRule : List Name → Name → St → TC (Maybe Term × St)
+  processCondRule gh n st =
+    catch (do
+      ty ← getType n
+      (body , tel) ← stripAndReduce 100 ty
+      let D = length tel
+          c = condCount tel body
+      case c of λ where
+        zero    → return (nothing , st)
+        (suc _) → do
+          (def (quote _≡_) (hArg _ ∷ hArg _ ∷ vArg lhs ∷ vArg rhs ∷ [])) ← return body
+            where _ → return (nothing , st)
+          let nVals  = D ∸ c
+              valTel = take nVals tel
+          (ciPair ∷ _) ← return (drop nVals tel)
+            where [] → return (nothing , st)
+          (bs , st₁) ← goBinders 0 st valTel
+          let pats  = Data.List.replicate c 0 Data.List.++ reverse bs
+              valIs = Data.List.zipWith _,_ (map proj₁ valTel) bs
+          (lhsE , rhsE , st₂) ← extendCtxTel tel (do
+            lhs′ ← realign gh lhs
+            rhs′ ← realign gh rhs
+            (lhsE , sta) ← conv D pats st₁ lhs′
+            (rhsE , stb) ← conv D pats sta rhs′
+            return (lhsE , rhsE , stb))
+          lhsT ← quoteNorm lhsE
+          rhsT ← quoteNorm rhsE
+          (condDom , instT) ← extendContext ("τ" , vArg funℕℕℕT) (do
+            pty ← inferType (def n (condTvals D 0 valIs)) >>= reduce
+            (pi (arg _ dom) _) ← return pty
+              where _ → error1 "simp!: expected a conditional premise"
+            (inst ∷ _) ← findInstances (def (quote _⁇) (vArg dom ∷ []))
+              where [] → error1 "simp!: no decidability instance for the side condition"
+            return (dom , inst))
+          return ( just (con (quote RC.Eval.mkCondRule)
+                           ( vArg lhsT ∷ vArg rhsT ∷ vArg (con (quote refl) [])
+                           ∷ vArg (mkFireTerm n D valIs (proj₁ ciPair) condDom instT) ∷ [] ))
+                 , st₂ ))
+      (λ _ → return (nothing , st))
+
+  processCondRules : List Name → List Name → St → TC (List Term × St)
+  processCondRules gh []       st = return ([] , st)
+  processCondRules gh (n ∷ ns) st = do
+    (mr , st₁) ← processCondRule gh n st
+    (rs , st₂) ← processCondRules gh ns st₁
+    return ((case mr of λ where (just r) → r ∷ rs ; nothing → rs) , st₂)
+
   processRule : List Term → St → Name → TC (List Term × St)
   processRule cands st n = do
     ty ← getType n
@@ -1568,8 +1651,12 @@ private
         cands ← enrichCandidates names (subApps lhs ++ subApps rhs)
         (ruleTs , st₀) ← processRules cands names (mkSt [] [] nothing)
         (hypTs  , st₀′) ← processHyps st₀ hyps′
+        -- Also reify the conditional rules as engine `CondRule`s, so they
+        -- can fire on redexes that materialise mid-rewrite (not only on
+        -- goal-present instances handled by `processCondAssign`).
+        (condTs , st₀″) ← processCondRules (headsOf cands) names st₀′
         let allRuleTs = ruleTs ++ hypTs
-        (lhsE , st₁) ← conv 0 [] st₀′ lhs
+        (lhsE , st₁) ← conv 0 [] st₀″ lhs
         (rhsE , st₂) ← conv 0 [] st₁ rhs
         lT  ← quoteNorm lhsE
         rT  ← quoteNorm rhsE
@@ -1593,10 +1680,15 @@ private
             rulesT   = case liftInfo of λ where
               nothing            → quoteList allRuleTs
               (just (_ , flags)) → quoteList (map (wrapRule flags) allRuleTs)
+            -- Conditional rules only in the non-lifted (single-level) case;
+            -- mixed-level goals fall back to no conditional rules.
+            condRulesT = case liftInfo of λ where
+              nothing      → quoteList condTs
+              (just _)     → noCondRulesT TsT opsT
             solveApp = def (quote RC.Eval.solveAt)
               ( vArg TsT ∷ vArg opsT
               ∷ vArg (`ℕ g) ∷ vArg fuelT
-              ∷ vArg rulesT ∷ vArg (noCondRulesT TsT opsT) ∷ vArg lT ∷ vArg rT ∷ [] )
+              ∷ vArg rulesT ∷ vArg condRulesT ∷ vArg lT ∷ vArg rT ∷ [] )
             mkProof : Term → Term
             mkProof p = if gLifted
                         then def (quote cong) (vArg (def (quote lower) []) ∷ vArg p ∷ [])
@@ -1604,6 +1696,13 @@ private
         -- Pre-run the solver to WHNF at the meta level for a decent
         -- error (via is-just, so the proof term is never normalised).
         nf ← normalise (def (quote Data.Maybe.is-just) (vArg solveApp ∷ []))
+        let -- the clean "failed to close" report (engine normal forms).
+            reportFail : TC ⊤
+            reportFail = do
+              lNF ← stuckParts fuelT TsT opsT g rulesT lT
+              rNF ← stuckParts fuelT TsT opsT g rulesT rT
+              error (strErr "simp!: simplification failed to close the goal; the two sides reached the normal forms\n    "
+                     ∷ lNF ++ strErr "\n  and\n    " ∷ rNF)
         case nf of λ where
           (con c _) → if c == quote Data.Bool.false
             -- Last resort: rewrite each side to its engine normal form
@@ -1622,13 +1721,11 @@ private
                             ( vArg (con (quote refl) [])
                             ∷ vArg (def (quote sym) (vArg (eqSide rT) ∷ [])) ∷ []))
                         ∷ [] )
-                  in catch (unifyWithGoal (mkProof composed)) λ _ → do
-              lNF ← stuckParts fuelT TsT opsT g rulesT lT
-              rNF ← stuckParts fuelT TsT opsT g rulesT rT
-              error (strErr "simp!: simplification failed to close the goal; the two sides reached the normal forms\n    "
-                     ∷ lNF ++ strErr "\n  and\n    " ∷ rNF))
+                  in catch (unifyWithGoal (mkProof composed)) λ _ → reportFail)
             else unifyWithGoal (mkProof (def (quote RC.from-just!) (vArg solveApp ∷ [])))
-          _ → unifyWithGoal (mkProof (def (quote RC.from-just!) (vArg solveApp ∷ [])))
+          -- A stuck pre-run means a conditional decision could not reduce
+          -- (abstract operands) — the goal is not closable here; report it.
+          _ → reportFail
       _ → error1 "simp!: goal is not a propositional equality"
 
   ----------------------------------------------------------------

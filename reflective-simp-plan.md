@@ -495,11 +495,31 @@ trusts the meta level; prefer features that keep that invariant.
      postulates) operationally confirms it: a hand-built `CondRule` `g x ≡ x`
      fires through `solveAt` (`condFires`), and the same goal does NOT close
      without it (`condNeeded`) — so `tryRulesC` is genuinely consulted.
-   - STILL TODO: the frontend `fire`-builder — synthesise `fire` as a
-     τ-indexed quoted term from a `Class.Decidable` instance / context
-     hypothesis, with sort casts (the fiddly, risk-bearing part), and emit a
-     real `List CondRule` in place of `noCondRules`; plus an end-to-end test
-     (CondTests `resid` should flip to passing).
+   - **Frontend `fire`-builder — DONE 2026-06-15.** `processCondRule`
+     reifies a conditional rule generically (value binders → engine vars;
+     `goBinders` over the value binders only, since the cond binder's type
+     is dependent; `pats` padded for the cond binders) and emits a
+     `mkCondRule` whose `fire` is `λ τ → decToFire ¿ condDom ¿ ⦃inst⦄
+     (λ p → lemma <value τ-vals> p)`.  `condDom` (the premise at the
+     τ-values) is read off by `inferType`-ing the lemma applied to the
+     value τ-vals under a FAKE `τ : ℕ → ℕ → ℕ` (avoids manual de Bruijn
+     substitution); the `_⁇` instance is resolved with `findInstances` and
+     BAKED IN (a deferred meta would block the macro's pre-run).
+     `processCondRules` collects them and `simpRGoal` passes the quoted
+     list to `solveAt`.  Test: `CondTests.resid` now PASSES (a materialised
+     `3 ⊕ 5` is rewritten via the in-engine `CondRule`).
+   - Two engine/macro fixes this needed: (a) `rewrite₁` tries CONDITIONAL
+     rules at the root LAST (after subterm rewriting), so a premise is
+     decided only once its operands are normalised — otherwise `fire` on a
+     stuck condition (`g x ≤ 5`) halts the evaluator; (b) a stuck macro
+     pre-run (`is-just` not reducing — abstract operands) now reports the
+     clean "failed to close" instead of leaking `from-just!`'s
+     `UnequalTerms`.  Both false-ground and abstract-unprovable conditional
+     goals fail cleanly.
+   - SCOPE of the builder: a single decidable premise over ℕ-sorted
+     operands, no polymorphic parameters (the fake-τ is `ℕ→ℕ→ℕ`); other
+     conditional rules fall back to `processCondAssign` (goal-present
+     macro-time discharge) and are simply not added as `CondRule`s.
 10. **Goals beyond ≡ and registered relations**: boolean goals (`T b`,
     `b ≡ true` via `decide`-style closure) — the original TODO at the
     top of old `Tactic.Simp`.

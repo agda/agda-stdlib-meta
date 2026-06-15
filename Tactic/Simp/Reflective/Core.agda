@@ -225,6 +225,13 @@ mutual
   ... | no ¬p | _     = no λ where (p , _) → ¬p p
   ... | _     | no ¬q = no λ where (_ , q) → ¬q q
 
+-- A `CondRule`'s `fire` is built (by the macro) as
+--   λ τ → decToFire (decide the side condition at τ) (λ p → lemma … p)
+-- so the macro need only synthesise the decision and the lemma application.
+decToFire : ∀ {a b} {P : Set a} {B : Set b} → Dec P → (P → B) → Maybe B
+decToFire (yes p) f = just (f p)
+decToFire (no  _) _ = nothing
+
 ----------------------------------------------------------------
 -- Sort interpretation, casting, and operation types.
 ----------------------------------------------------------------
@@ -564,13 +571,19 @@ module Eval {ℓ} (Ts : List (Pointed ℓ)) (ops : List (WithSorts.Op Ts)) where
   ----------------------------------------------------------------
 
   mutual
-    -- One rewrite step anywhere (root first, then leftmost-outermost).
+    -- One rewrite step.  Plain rules at the root first; then subterms
+    -- (leftmost-outermost); then CONDITIONAL rules at the root LAST.
+    -- Conditional rules go last so a side condition is decided only once
+    -- its operands are normalised — e.g. `g x ⊕ 5` rewrites the inner
+    -- `g x → 3` before `⊕-le` is tried, so the premise is the decidable
+    -- `3 ≤ 5` and not the stuck `g x ≤ 5` (a stuck decision would halt the
+    -- evaluator instead of skipping the rule).
     rewrite₁ : Rules → List CondRule → (e : Expr) → Maybe (Step e)
     rewrite₁ rs crs e with tryRules rs e
     ... | just s  = just s
-    ... | nothing with tryRulesC crs e
+    ... | nothing with rewriteSub rs crs e
     ...   | just s  = just s
-    ...   | nothing = rewriteSub rs crs e
+    ...   | nothing = tryRulesC crs e
 
     rewriteSub : Rules → List CondRule → (e : Expr) → Maybe (Step e)
     rewriteSub rs crs (var i s)   = nothing
