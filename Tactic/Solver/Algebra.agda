@@ -413,7 +413,8 @@ private
     pure (finishSolve env f atoms)
 
 -- Precondition: `R` has been type-checked against the structure's
--- bundle type by the caller (e.g. via `Tactic.Solver.Ring.detectSide`).
+-- bundle type by the caller (e.g. via
+-- `Tactic.Solver.Ring.Core.detectSide`).
 solveByTheory : Theory → Term → Term → TC ⊤
 solveByTheory thy `R hole = do
   let open Theory thy

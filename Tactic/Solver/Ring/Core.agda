@@ -1,7 +1,10 @@
 ------------------------------------------------------------------------
--- A reflection-based ring solver.
+-- Implementation of the reflective ring solver. See
+-- `Tactic.Solver.Ring` for user-facing documentation. If you want to
+-- use the ring solver, please import `Tactic.Solver.Ring` rather than
+-- this module.
 --
--- `solve-≈` accepts either a `CommutativeSemiring` or a
+-- `solve-≈-macro` accepts either a `CommutativeSemiring` or a
 -- `CommutativeRing` and dispatches to the appropriate backend:
 --   * CSR → `Algebra.Solver.Ring.NaturalCoefficients.Default R`
 --     (ℕ coefficients, no negation);
@@ -21,7 +24,7 @@
 
 {-# OPTIONS --without-K --safe #-}
 
-module Tactic.Solver.Ring where
+module Tactic.Solver.Ring.Core where
 
 open import Algebra using (CommutativeSemiring; CommutativeRing)
 

@@ -213,7 +213,7 @@ open import Algebra.Solver.Ring ℤ-rawRing R-acr morphism dec public
 -- Definition aliases for the *constructors* the macro emits:
 -- constructor re-exports are not re-parameterised the way definition
 -- re-exports are, so without these the macro could not supply `R`
--- explicitly (see the `NatC` module in `Tactic.Solver.Ring`). The
+-- explicitly (see the `NatC` module in `Tactic.Solver.Ring.Core`). The
 -- `def`-shaped `_:+_`, `_:*_`, `_:-_`, `_:=_` need no aliases.
 
 conP : ∀ {n} → ℤ → Polynomial n
