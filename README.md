@@ -80,11 +80,18 @@ equation is conditional. For the decision path, callers need the relevant
 `_⁇` instances in scope (`open import Class.Decidable`); these cover ℕ/ℤ/ℚ
 `_≤_`/`_<_` and any `_≡_` over a `DecEq` type, and are user-extensible.
 
+Beyond goal-present instances, a conditional rule is *also* carried into the
+verified engine as a side-condition-decided rule, so it fires on redexes that
+only **materialise during rewriting** — e.g. an opaque `g x ⊕ 5 ≡ 3` closes by
+rewriting `g x → 3` first, then deciding `3 ≤ 5` on the resulting `3 ⊕ 5`.
+This in-engine path currently handles a single decidable premise over
+ℕ-sorted operands.
+
 **Current limitations.** Relations defined as plain functions (e.g. `_⊆_`,
 which `inferType` unfolds to its Π-definition) are not yet supported. A
-conditional rule fires only on operands **present in the goal** (the premise
-is dispatched at macro time): a side condition for a redex that only
-materialises *after* other rewrites is not discharged.
+side condition on a materialised redex is discharged only *by decision* (not
+by assumption), and the in-engine path is limited to a single decidable
+ℕ-premise; richer conditional rules still fire only on goal-present operands.
 
 See [`reflective-simp-plan.md`](reflective-simp-plan.md) for the roadmap,
 the migration matrix against the older `Tactic.Simp`, and benchmark numbers;
