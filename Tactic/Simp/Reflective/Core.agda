@@ -437,99 +437,11 @@ module Eval {ℓ} (Ts : List (Pointed ℓ)) (ops : List (WithSorts.Op Ts)) where
   ... | just s  = just s
   ... | nothing = tryRules rs e
 
-  mutual
-    -- One rewrite step anywhere (root first, then leftmost-outermost).
-    rewrite₁ : Rules → (e : Expr) → Maybe (Step e)
-    rewrite₁ rs e with tryRules rs e
-    ... | just s  = just s
-    ... | nothing = rewriteSub rs e
-
-    rewriteSub : Rules → (e : Expr) → Maybe (Step e)
-    rewriteSub rs (var i s)   = nothing
-    rewriteSub rs (op o s es) with rewrites₁ rs es
-    ... | nothing        = nothing
-    ... | just (es′ , p) = just (op o s es′ , op-cong o s p)
-
-    rewrites₁ : Rules → (es : List Expr)
-              → Maybe (Σ (List Expr) (ESteps es))
-    rewrites₁ rs []       = nothing
-    rewrites₁ rs (e ∷ es) with rewrite₁ rs e
-    ... | just (e′ , p) = just (e′ ∷ es , p ∷ eRefls es)
-      where
-        eRefls : ∀ es → ESteps es es
-        eRefls []       = []
-        eRefls (e ∷ es) = eRefl e ∷ eRefls es
-    ... | nothing with rewrites₁ rs es
-    ...   | just (es′ , ps) = just (e ∷ es′ , eRefl e ∷ ps)
-    ...   | nothing         = nothing
-
-  -- NB: the recursive result is shared via `with` (a pattern-let
-  -- would desugar to two projections of the redex, making the
-  -- evaluator recompute the recursion once per projection —
-  -- exponential in the length of the rewrite chain).
-  simplify : ℕ → Rules → (e : Expr) → Step e
-  simplify zero    rs e = e , eRefl e
-  simplify (suc n) rs e with rewrite₁ rs e
-  ... | nothing       = e , eRefl e
-  ... | just (e′ , p) with simplify n rs e′
-  ...   | (e″ , q) = e″ , λ s ρ → trans (p s ρ) (q s ρ)
-
-  -- Try reducing rules before permutative ones: a gated permutative
-  -- step (e.g. commutativity pulling a unit literal to the front) can
-  -- otherwise permanently destroy a redex of an ordinary rule.  Pure
-  -- list reordering — soundness is per-rule, so order is free.
-  prioritize : Rules → Rules
-  prioritize rs = nonPerm rs ++ʳ permOnly rs
-    where
-      _++ʳ_ : Rules → Rules → Rules
-      []       ++ʳ ys = ys
-      (x ∷ xs) ++ʳ ys = x ∷ (xs ++ʳ ys)
-
-      nonPerm : Rules → Rules
-      nonPerm [] = []
-      nonPerm (r ∷ rs) with Rule.perm r
-      ... | false = r ∷ nonPerm rs
-      ... | true  = nonPerm rs
-
-      permOnly : Rules → Rules
-      permOnly [] = []
-      permOnly (r ∷ rs) with Rule.perm r
-      ... | true  = r ∷ permOnly rs
-      ... | false = permOnly rs
-
-  solve : ℕ → Rules → (l r : Expr) → Maybe (EStep l r)
-  solve n rs₀ l r with prioritize rs₀
-  ... | rs with simplify n rs l | simplify n rs r
-  ...   | (l′ , p) | (r′ , q) with eqExpr? l′ r′
-  ...     | just eq =
-            just (λ s ρ → trans (p s ρ)
-                          (trans (cong (evalAt s ρ) eq) (sym (q s ρ))))
-  ...     | nothing = nothing
-
-  -- Entry point for the macro: fix the goal sort and use the
-  -- defaults environment (goal expressions are var-free).
+  -- Defaults environment.  The macro evaluates the final proof here;
+  -- goal-side expressions are var-free, so `eval` does not depend on it
+  -- (this is what `eval-closed` below exploits for conditional rules).
   ρ₀ : Env
   ρ₀ s _ = default s
-
-  solveAt : (g : ℕ) → ℕ → Rules → (l r : Expr)
-          → Maybe (evalAt g ρ₀ l ≡ evalAt g ρ₀ r)
-  solveAt g n rs l r with solve n rs l r
-  ... | just p  = just (p g ρ₀)
-  ... | nothing = nothing
-
-  -- The normal form `simplify` reaches.  Plain (non-proof) helper the
-  -- frontend uses ONLY on the failure path, to evaluate the two stuck
-  -- sides into a goal-sized term for a better error message.
-  normalForm : ℕ → Rules → Expr → Expr
-  normalForm n rs e = proj₁ (simplify n (prioritize rs) e)
-
-  -- The verified ≡-step transporting one side of a relation goal to its
-  -- engine normal form, at the goal sort, in the defaults environment.
-  -- Used by `simpRel!`: the type `evalAt g ρ₀ e ≡ evalAt g ρ₀ (normalForm n rs e)`
-  -- reduces (by definitional collapse) to `goalSide ≡ goalSideNF`.
-  simplifyEq : (g : ℕ) (n : ℕ) (rs : Rules) (e : Expr)
-             → evalAt g ρ₀ e ≡ evalAt g ρ₀ (normalForm n rs e)
-  simplifyEq g n rs e = proj₂ (simplify n (prioritize rs) e) g ρ₀
 
   ----------------------------------------------------------------
   -- Conditional rules.
@@ -633,6 +545,114 @@ module Eval {ℓ} (Ts : List (Pointed ℓ)) (ops : List (WithSorts.Op Ts)) where
                      | CondRule.fire cr (substVar ρ₀ σ)
   ...     | yes ecl | yes rcl | just base = just (mkCondStep cr σ e eq ecl rcl base)
   ...     | _       | _       | _         = nothing
+
+  -- Try each conditional rule in turn.
+  tryRulesC : List CondRule → (e : Expr) → Maybe (Step e)
+  tryRulesC []         e = nothing
+  tryRulesC (cr ∷ crs) e with tryRuleC cr e
+  ... | just s  = just s
+  ... | nothing = tryRulesC crs e
+
+  -- Empty conditional-rule set.  The frontend passes this until the
+  -- `fire`-builder is implemented, keeping the entry-point arities stable.
+  noCondRules : List CondRule
+  noCondRules = []
+
+  ----------------------------------------------------------------
+  -- The rewriting engine (now threading a `List CondRule` alongside the
+  -- ordinary `Rules`; plain rules are tried before conditional ones).
+  ----------------------------------------------------------------
+
+  mutual
+    -- One rewrite step anywhere (root first, then leftmost-outermost).
+    rewrite₁ : Rules → List CondRule → (e : Expr) → Maybe (Step e)
+    rewrite₁ rs crs e with tryRules rs e
+    ... | just s  = just s
+    ... | nothing with tryRulesC crs e
+    ...   | just s  = just s
+    ...   | nothing = rewriteSub rs crs e
+
+    rewriteSub : Rules → List CondRule → (e : Expr) → Maybe (Step e)
+    rewriteSub rs crs (var i s)   = nothing
+    rewriteSub rs crs (op o s es) with rewrites₁ rs crs es
+    ... | nothing        = nothing
+    ... | just (es′ , p) = just (op o s es′ , op-cong o s p)
+
+    rewrites₁ : Rules → List CondRule → (es : List Expr)
+              → Maybe (Σ (List Expr) (ESteps es))
+    rewrites₁ rs crs []       = nothing
+    rewrites₁ rs crs (e ∷ es) with rewrite₁ rs crs e
+    ... | just (e′ , p) = just (e′ ∷ es , p ∷ eRefls es)
+      where
+        eRefls : ∀ es → ESteps es es
+        eRefls []       = []
+        eRefls (e ∷ es) = eRefl e ∷ eRefls es
+    ... | nothing with rewrites₁ rs crs es
+    ...   | just (es′ , ps) = just (e ∷ es′ , eRefl e ∷ ps)
+    ...   | nothing         = nothing
+
+  -- NB: the recursive result is shared via `with` (a pattern-let
+  -- would desugar to two projections of the redex, making the
+  -- evaluator recompute the recursion once per projection —
+  -- exponential in the length of the rewrite chain).
+  simplify : ℕ → Rules → List CondRule → (e : Expr) → Step e
+  simplify zero    rs crs e = e , eRefl e
+  simplify (suc n) rs crs e with rewrite₁ rs crs e
+  ... | nothing       = e , eRefl e
+  ... | just (e′ , p) with simplify n rs crs e′
+  ...   | (e″ , q) = e″ , λ s ρ → trans (p s ρ) (q s ρ)
+
+  -- Try reducing rules before permutative ones: a gated permutative
+  -- step (e.g. commutativity pulling a unit literal to the front) can
+  -- otherwise permanently destroy a redex of an ordinary rule.  Pure
+  -- list reordering — soundness is per-rule, so order is free.
+  prioritize : Rules → Rules
+  prioritize rs = nonPerm rs ++ʳ permOnly rs
+    where
+      _++ʳ_ : Rules → Rules → Rules
+      []       ++ʳ ys = ys
+      (x ∷ xs) ++ʳ ys = x ∷ (xs ++ʳ ys)
+
+      nonPerm : Rules → Rules
+      nonPerm [] = []
+      nonPerm (r ∷ rs) with Rule.perm r
+      ... | false = r ∷ nonPerm rs
+      ... | true  = nonPerm rs
+
+      permOnly : Rules → Rules
+      permOnly [] = []
+      permOnly (r ∷ rs) with Rule.perm r
+      ... | true  = r ∷ permOnly rs
+      ... | false = permOnly rs
+
+  solve : ℕ → Rules → List CondRule → (l r : Expr) → Maybe (EStep l r)
+  solve n rs₀ crs l r with prioritize rs₀
+  ... | rs with simplify n rs crs l | simplify n rs crs r
+  ...   | (l′ , p) | (r′ , q) with eqExpr? l′ r′
+  ...     | just eq =
+            just (λ s ρ → trans (p s ρ)
+                          (trans (cong (evalAt s ρ) eq) (sym (q s ρ))))
+  ...     | nothing = nothing
+
+  solveAt : (g : ℕ) → ℕ → Rules → List CondRule → (l r : Expr)
+          → Maybe (evalAt g ρ₀ l ≡ evalAt g ρ₀ r)
+  solveAt g n rs crs l r with solve n rs crs l r
+  ... | just p  = just (p g ρ₀)
+  ... | nothing = nothing
+
+  -- The normal form `simplify` reaches.  Plain (non-proof) helper the
+  -- frontend uses ONLY on the failure path, to evaluate the two stuck
+  -- sides into a goal-sized term for a better error message.
+  normalForm : ℕ → Rules → List CondRule → Expr → Expr
+  normalForm n rs crs e = proj₁ (simplify n (prioritize rs) crs e)
+
+  -- The verified ≡-step transporting one side of a relation goal to its
+  -- engine normal form, at the goal sort, in the defaults environment.
+  -- Used by `simpRel!`: the type `evalAt g ρ₀ e ≡ evalAt g ρ₀ (normalForm n rs crs e)`
+  -- reduces (by definitional collapse) to `goalSide ≡ goalSideNF`.
+  simplifyEq : (g : ℕ) (n : ℕ) (rs : Rules) (crs : List CondRule) (e : Expr)
+             → evalAt g ρ₀ e ≡ evalAt g ρ₀ (normalForm n rs crs e)
+  simplifyEq g n rs crs e = proj₂ (simplify n (prioritize rs) crs e) g ρ₀
 
   ----------------------------------------------------------------
   -- Rule-usage diagnostics (for `simp?`).  This re-runs the SAME

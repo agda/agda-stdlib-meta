@@ -484,12 +484,22 @@ trusts the meta level; prefer features that keep that invariant.
      the design is verified.  This is the "Closed" variant; the
      by-construction-closed alternative (MIT-PLV ITP'22 `option`-returning
      rules) is referenced in a `Core.agda` design note in case we switch.
-     STILL TODO: wire `tryRuleC` into `tryRules`/`simplify`/`solve` (thread
-     `List CondRule` alongside `Rules` without disturbing existing callers),
-     and the frontend `fire`-builder (synthesise `fire` as a τ-indexed
-     quoted term from a `Class.Decidable` instance / context hypothesis,
-     with sort casts) — the fiddly, risk-bearing part; plus an end-to-end
-     test (CondTests `resid` should flip to passing).
+   - **Engine-loop wiring — DONE 2026-06-15.** `simplify`/`rewrite₁`/
+     `rewriteSub`/`rewrites₁`/`solve`/`solveAt`/`normalForm`/`simplifyEq`
+     now thread a `List CondRule` alongside `Rules`; `rewrite₁` tries plain
+     rules, then `tryRulesC`, then recurses into subterms.  `ρ₀` and the
+     conditional block moved above the engine to satisfy ordering.  The
+     frontend passes `RC.Eval.noCondRules` (empty) at every engine call
+     (helper `noCondRulesT`), so behaviour is unchanged and all existing
+     tests still pass.  `CoreCondTest.agda` (pure Core, `--safe`, no
+     postulates) operationally confirms it: a hand-built `CondRule` `g x ≡ x`
+     fires through `solveAt` (`condFires`), and the same goal does NOT close
+     without it (`condNeeded`) — so `tryRulesC` is genuinely consulted.
+   - STILL TODO: the frontend `fire`-builder — synthesise `fire` as a
+     τ-indexed quoted term from a `Class.Decidable` instance / context
+     hypothesis, with sort casts (the fiddly, risk-bearing part), and emit a
+     real `List CondRule` in place of `noCondRules`; plus an end-to-end test
+     (CondTests `resid` should flip to passing).
 10. **Goals beyond ≡ and registered relations**: boolean goals (`T b`,
     `b ≡ true` via `decide`-style closure) — the original TODO at the
     top of old `Tactic.Simp`.

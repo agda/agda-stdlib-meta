@@ -1317,11 +1317,17 @@ private
   -- The error parts naming one stuck side's normal form.  We emit the
   -- normalised goal-context Term as a `termErr`, so Agda renders it with
   -- the real context names (`xs`, `n`, …) rather than raw de Bruijn.
+  -- Quoted empty conditional-rule list.  The frontend does not build any
+  -- conditional rules yet (that is the pending `fire`-builder), so every
+  -- engine call passes this to satisfy the new `List CondRule` argument.
+  noCondRulesT : Term → Term → Term
+  noCondRulesT TsT opsT = def (quote RC.Eval.noCondRules) (vArg TsT ∷ vArg opsT ∷ [])
+
   stuckParts : Term → Term → Term → ℕ → Term → Term → TC (List ErrorPart)
   stuckParts fuelT TsT opsT g rulesT eE = do
     let nfApp = def (quote RC.Eval.normalForm)
                   ( vArg TsT ∷ vArg opsT
-                  ∷ vArg fuelT ∷ vArg rulesT ∷ vArg eE ∷ [] )
+                  ∷ vArg fuelT ∷ vArg rulesT ∷ vArg (noCondRulesT TsT opsT) ∷ vArg eE ∷ [] )
     -- Read back the normal-form Expr first and refuse to evaluate huge
     -- ones: rendering a deep normal form through the (non-sharing)
     -- evaluator can take minutes, and a large form almost always means
@@ -1362,7 +1368,7 @@ private
   computeNF fuelT TsT opsT rulesT eE =
     normalise (def (quote RC.Eval.normalForm)
                   ( vArg TsT ∷ vArg opsT
-                  ∷ vArg fuelT ∷ vArg rulesT ∷ vArg eE ∷ [] ))
+                  ∷ vArg fuelT ∷ vArg rulesT ∷ vArg (noCondRulesT TsT opsT) ∷ vArg eE ∷ [] ))
 
   -- p_i : evalAt g ρ₀ e ≡ evalAt g ρ₀ (normalForm 100 rs e), whose type
   -- reduces (definitional collapse) to the actual goal-side term ≡ nf.
@@ -1370,7 +1376,7 @@ private
   mkSimplifyEq fuelT TsT opsT g rulesT eE =
     def (quote RC.Eval.simplifyEq)
       ( vArg TsT ∷ vArg opsT
-      ∷ vArg (`ℕ g) ∷ vArg fuelT ∷ vArg rulesT ∷ vArg eE ∷ [] )
+      ∷ vArg (`ℕ g) ∷ vArg fuelT ∷ vArg rulesT ∷ vArg (noCondRulesT TsT opsT) ∷ vArg eE ∷ [] )
 
   -- subst-based relation proof (mirrors old buildRelProof).  prefix/rhs
   -- are goal-context terms; shift them under the predicate λ.  `changedL`
@@ -1590,7 +1596,7 @@ private
             solveApp = def (quote RC.Eval.solveAt)
               ( vArg TsT ∷ vArg opsT
               ∷ vArg (`ℕ g) ∷ vArg fuelT
-              ∷ vArg rulesT ∷ vArg lT ∷ vArg rT ∷ [] )
+              ∷ vArg rulesT ∷ vArg (noCondRulesT TsT opsT) ∷ vArg lT ∷ vArg rT ∷ [] )
             mkProof : Term → Term
             mkProof p = if gLifted
                         then def (quote cong) (vArg (def (quote lower) []) ∷ vArg p ∷ [])
@@ -1609,7 +1615,7 @@ private
             then (let eqSide : Term → Term
                       eqSide eT = def (quote RC.Eval.simplifyEq)
                         ( vArg TsT ∷ vArg opsT ∷ vArg (`ℕ g) ∷ vArg (`ℕ 100)
-                        ∷ vArg rulesT ∷ vArg eT ∷ [] )
+                        ∷ vArg rulesT ∷ vArg (noCondRulesT TsT opsT) ∷ vArg eT ∷ [] )
                       composed = def (quote trans)
                         ( vArg (eqSide lT)
                         ∷ vArg (def (quote trans)
