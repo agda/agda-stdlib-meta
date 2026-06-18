@@ -21,5 +21,7 @@ open import Reflection.Utils.TCI
 open import Reflection.Utils.TCM
 open import Reflection.AlphaEquality
 open import Reflection.AntiUnification
+open import Reflection.Tactic.Prover
+open import Reflection.Tactic.Prover.Examples
 
 open import Tactic

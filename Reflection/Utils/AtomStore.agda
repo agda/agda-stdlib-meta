@@ -25,7 +25,8 @@ module Reflection.Utils.AtomStore where
 open import Meta.Prelude
 
 import Data.Maybe as Maybe
-open import Data.List using (map)
+import Data.Fin as Fin
+open import Data.List using (map; findIndexᵇ)
 open import Reflection
 open import Reflection.AST.AlphaEquality using (_=α=_)
 
@@ -50,3 +51,22 @@ atomStoreIndex a (b ∷ rest) =
 
 atomSpellings : AtomStore → List Term
 atomSpellings = map proj₁
+
+------------------------------------------------------------------------
+-- Simple α-keyed atom table.
+--
+-- A lighter tier than the dual-key `AtomStore` above: atoms are kept as
+-- a bare `List Term`, deduplicated up to α-equality, with no separate
+-- whnf key. Use this when the macro never re-emits an atom in unfolded
+-- form (e.g. the first-order solver, whose atoms are opaque predicate
+-- occurrences). Equation solvers that splice atoms back into the proof
+-- term — and so must preserve the user's exact spelling while still
+-- deduplicating definitionally-equal spellings — want the dual-key
+-- `AtomStore` above instead.
+
+insertAtom : Term → List Term → List Term
+insertAtom t []       = t ∷ []
+insertAtom t (a ∷ as) = if t =α= a then a ∷ as else a ∷ insertAtom t as
+
+findAtomIndex : Term → List Term → Maybe ℕ
+findAtomIndex t xs = Maybe.map Fin.toℕ (findIndexᵇ (t =α=_) xs)
