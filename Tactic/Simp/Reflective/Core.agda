@@ -41,7 +41,7 @@ open import Data.Product using (Σ; _×_; _,_; proj₁; proj₂)
 open import Data.Unit    using (⊤; tt)
 open import Relation.Nullary using (Dec; yes; no; ¬_)
 open import Relation.Binary.PropositionalEquality
-  using (_≡_; _≢_; refl; sym; trans; cong; subst)
+  using (_≡_; _≢_; refl; sym; trans; cong; subst; subst₂)
 
 private variable ℓ : Level
 
@@ -772,6 +772,309 @@ module Eval {ℓ} (Ts : List (Pointed ℓ)) (ops : List (WithSorts.Op Ts)) where
   usedRules n rs₀ l r =
     let irs = prioritizeI (enumRules rs₀)
     in simplifyU n irs r (simplifyU n irs l [])
+
+  ----------------------------------------------------------------
+  -- A first-order builder for the R-family the `WithRel` layer below
+  -- takes as its `R`/`Rrefl`/`Rtrans` parameters.
+  --
+  -- The frontend cannot easily emit a function-by-cases `(s : ℕ) → …`,
+  -- so it emits a LIST of per-sort relations (each packaged with its own
+  -- reflexivity and transitivity) and lets `RFam`/`RFam-refl`/`RFam-trans`
+  -- turn that list into the family — falling back to `_≡_` on the sort's
+  -- carrier for any sort not in the list.  `_≡_` is itself reflexive-
+  -- transitive, so off-list sorts trivially satisfy the layer's
+  -- assumptions; in practice the list has one entry (the goal sort).
+  ----------------------------------------------------------------
+
+  -- A per-sort relation packaged with its reflexivity and transitivity.
+  record RelPack (s : ℕ) : Set (ℓsuc ℓ) where
+    constructor mkRelPack
+    field
+      rel  : ⟦ s ⟧ → ⟦ s ⟧ → Set ℓ
+      rrfl : ∀ v → rel v v
+      rtrn : ∀ {a b c} → rel a b → rel b c → rel a c
+
+  RelTable : Set (ℓsuc ℓ)
+  RelTable = List (Σ ℕ RelPack)
+
+  -- Verified lookup (transports the stored pack along the index match,
+  -- pattern `yes refl` — same trick as `lookupMono`/`csoundAt`).
+  lookupRel : RelTable → (s : ℕ) → Maybe (RelPack s)
+  lookupRel []              s = nothing
+  lookupRel ((s′ , p) ∷ tab) s with s ≟ s′
+  ... | yes refl = just p
+  ... | no  _    = lookupRel tab s
+
+  -- The R-family: the listed relation on a listed sort, else `_≡_`.
+  RFam : RelTable → (s : ℕ) → ⟦ s ⟧ → ⟦ s ⟧ → Set ℓ
+  RFam tab s x y with lookupRel tab s
+  ... | just p  = RelPack.rel p x y
+  ... | nothing = x ≡ y
+
+  -- `RFam-refl`/`RFam-trans` dispatch on the SAME `lookupRel tab s` as
+  -- `RFam`, so the goal `RFam tab s …` reduces in each branch.
+  RFam-refl : (tab : RelTable) → ∀ s (v : ⟦ s ⟧) → RFam tab s v v
+  RFam-refl tab s v with lookupRel tab s
+  ... | just p  = RelPack.rrfl p v
+  ... | nothing = refl
+
+  RFam-trans : (tab : RelTable) → ∀ s {a b c : ⟦ s ⟧}
+             → RFam tab s a b → RFam tab s b c → RFam tab s a c
+  RFam-trans tab s p q with lookupRel tab s
+  ... | just p′ = RelPack.rtrn p′ p q
+  ... | nothing = trans p q
+
+  ----------------------------------------------------------------
+  -- A preorder-parametric step layer OVER the ≡-engine above.
+  --
+  -- This rewrites along an arbitrary REFLEXIVE-TRANSITIVE relation
+  -- family (one relation per sort) — subsuming setoid rewriting
+  -- (`simpRel!`'s ≈-goals) and preorder rewriting (≤, ⊆) — without
+  -- touching the ≡-core and without requiring symmetry.
+  --
+  -- Design:
+  --   * The ≡-engine stays as-is and keeps doing all congruence descent
+  --     for ≡-rules: `cong` is free for every op, so ≡-rewriting needs
+  --     no monotonicity witnesses.  We LAYER rather than replace — a
+  --     core parameterised by R throughout would demand a `Respects`
+  --     witness per op even for pure ≡ goals.
+  --   * `RStep` mirrors `EStep` with R in the conclusion; ≡-steps embed
+  --     via `Rrefl` + `subst` (any relation respects ≡).
+  --   * `RRule` mirrors `Rule`; `rsoundAt`/`mkRStep` mirror
+  --     `soundAt`/`mkStep` with the outer `trans`-chain replaced by
+  --     `subst₂`-transport along the (still ≡) computational lemmas
+  --     `subst-eval`/`cast-diff`.
+  --   * Descent into an op's arguments with an R-step needs the op to be
+  --     monotone: `Respects` is the curried "respectful" signature
+  --     R ⟶ … ⟶ R (Rocq's `Proper`, stdlib's `_Preserves₂_⟶_⟶_`),
+  --     supplied per op in a first-order `MonoTable` the frontend can
+  --     emit as a list literal.  Ops without a witness simply don't admit
+  --     R-descent (their subterms still get full ≡-rewriting).
+  --   * Symmetry is needed NOWHERE: the goal `l R r` is closed by
+  --     ≡-normalising r (≡-steps flip with their own `sym`) and
+  --     R-chaining l towards it.
+  --
+  -- v1 scope EXCLUDES (design notes): contravariant positions / variance
+  -- vectors, converse-orientation RHS chaining, a permutative gate on
+  -- R-rules, CondRules in the R-layer, and a `usedRules` mirror for R.
+  ----------------------------------------------------------------
+
+  module WithRel
+    (R      : (s : ℕ) → ⟦ s ⟧ → ⟦ s ⟧ → Set ℓ)
+    (Rrefl  : ∀ s (v : ⟦ s ⟧) → R s v v)
+    (Rtrans : ∀ s {a b c : ⟦ s ⟧} → R s a b → R s b c → R s a c)
+    where
+
+    ----------------------------------------------------------------
+    -- R-steps: target-sort-quantified, like `EStep` (off-sort both
+    -- sides cast to the same default, where `Rrefl` closes).
+    ----------------------------------------------------------------
+
+    RStep : Expr → Expr → Set ℓ
+    RStep e e′ = ∀ s ρ → R s (evalAt s ρ e) (evalAt s ρ e′)
+
+    rRefl : ∀ e → RStep e e
+    rRefl e s ρ = Rrefl s (evalAt s ρ e)
+
+    -- (`a`/`b`/`c`/`e`/`e′` are explicit: `RStep`/`EStep` are reducing
+    -- type functions, so these indices are not recoverable by
+    -- unification — same lesson as Core's `eval-closed`.)
+    rTrans : ∀ a b c → RStep a b → RStep b c → RStep a c
+    rTrans _ _ _ p q s ρ = Rtrans s (p s ρ) (q s ρ)
+
+    -- Any relation respects ≡, so ≡-steps embed for free.  This is what
+    -- lets the untouched ≡-engine keep doing the bulk of the work.
+    embedStep : ∀ e e′ → EStep e e′ → RStep e e′
+    embedStep e _ p s ρ = subst (R s (evalAt s ρ e)) (p s ρ) (Rrefl s (evalAt s ρ e))
+
+    data RSteps : List Expr → List Expr → Set ℓ where
+      []  : RSteps [] []
+      _∷_ : ∀ {e e′ es es′}
+          → RStep e e′ → RSteps es es′ → RSteps (e ∷ es) (e′ ∷ es′)
+
+    rRefls : ∀ es → RSteps es es
+    rRefls []       = []
+    rRefls (e ∷ es) = rRefl e ∷ rRefls es
+
+    ----------------------------------------------------------------
+    -- R-rules: `Rule` with R in the conclusion.
+    ----------------------------------------------------------------
+
+    record RRule : Set ℓ where
+      constructor mkRRule
+      field
+        lhs rhs : Expr
+        sEq     : sortOf rhs ≡ sortOf lhs
+        sound   : ∀ τ → R (sortOf lhs) (evalAt (sortOf lhs) τ lhs)
+                          (evalAt (sortOf lhs) τ rhs)
+
+    RRules : Set ℓ
+    RRules = List RRule
+
+    -- `soundAt`'s twin: lift the rule-sort statement to all target
+    -- sorts.  Off-sort, both sides are `default s` (`cast-diff`), closed
+    -- by `Rrefl`.
+    rsoundAt : (rr : RRule) → RStep (RRule.lhs rr) (RRule.rhs rr)
+    rsoundAt rr s ρ with s ≟ sortOf (RRule.lhs rr)
+    ... | yes p =
+          subst (λ z → R z (evalAt z ρ (RRule.lhs rr)) (evalAt z ρ (RRule.rhs rr)))
+                (sym p) (RRule.sound rr ρ)
+    ... | no ¬p =
+          subst₂ (R s)
+            (sym (cast-diff (λ q → ¬p (sym q)) (eval ρ (RRule.lhs rr))))
+            (sym (cast-diff (λ q → ¬p (sym (trans (sym (RRule.sEq rr)) q)))
+                            (eval ρ (RRule.rhs rr))))
+            (Rrefl s (default s))
+
+    -- `mkStep`'s twin: the computational reshuffling (`subst-eval`, the
+    -- match equation) stays ≡ and is transported into R by `subst₂`.
+    mkRStep : (rr : RRule) (σ : Subst) (e : Expr)
+            → applyS σ (RRule.lhs rr) ≡ e → Σ Expr (RStep e)
+    mkRStep rr σ e eq =
+      applyS σ (RRule.rhs rr)
+      , λ s ρ → subst₂ (R s)
+          (trans (sym (subst-eval s ρ σ (RRule.lhs rr))) (cong (evalAt s ρ) eq))
+          (sym (subst-eval s ρ σ (RRule.rhs rr)))
+          (rsoundAt rr s (substVar ρ σ))
+
+    tryRuleR : RRule → (e : Expr) → Maybe (Σ Expr (RStep e))
+    tryRuleR rr e with match (RRule.lhs rr) e []
+    ... | nothing = nothing
+    ... | just σ with eqExpr? (applyS σ (RRule.lhs rr)) e
+    ...   | nothing = nothing
+    ...   | just eq = just (mkRStep rr σ e eq)
+
+    tryRulesR : RRules → (e : Expr) → Maybe (Σ Expr (RStep e))
+    tryRulesR []         e = nothing
+    tryRulesR (rr ∷ rrs) e with tryRuleR rr e
+    ... | just s  = just s
+    ... | nothing = tryRulesR rrs e
+
+    -- Empty R-rule set (arity-stable empty, like `noCondRules`); the
+    -- frontend passes this whenever a call has no relation-valued rules.
+    noRRules : RRules
+    noRRules = []
+
+    ----------------------------------------------------------------
+    -- Monotonicity: the curried "respectful" signature R ⟶ … ⟶ R.
+    -- This is the ONE new per-op obligation R-descent needs (≡-descent
+    -- keeps using `op-cong`, no witness required).  Shape-compatible
+    -- with stdlib lemmas:
+    --   `+-mono-≤ : _+_ Preserves₂ _≤_ ⟶ _≤_ ⟶ _≤_`.
+    ----------------------------------------------------------------
+
+    Respects : (as : List ℕ) (r : ℕ) → Fun as r → Fun as r → Set ℓ
+    Respects []       r u v = R r u v
+    Respects (a ∷ as) r f g = ∀ {x y} → R a x y → Respects as r (f x) (g y)
+
+    -- Per-op monotonicity table, FIRST-ORDER so the frontend can emit it
+    -- as a list literal (a function-valued `MonoT` is painful to build as
+    -- a Term).  An op absent from the table simply admits no R-descent.
+    MonoTable : Set ℓ
+    MonoTable =
+      List (Σ ℕ (λ o → Respects (argSorts o) (resSort o) (impl o) (impl o)))
+
+    -- Verified lookup: on an index match `o ≟ o′` the stored witness is
+    -- transported along the proof (pattern-match `yes refl`).
+    lookupMono : MonoTable → (o : ℕ)
+               → Maybe (Respects (argSorts o) (resSort o) (impl o) (impl o))
+    lookupMono []              o = nothing
+    lookupMono ((o′ , w) ∷ mt) o with o ≟ o′
+    ... | yes refl = just w
+    ... | no  _    = lookupMono mt o
+
+    -- Empty monotonicity table (arity-stable empty).
+    noMono : MonoTable
+    noMono = []
+
+    -- `applyE-cong`'s twin, with `Respects` supplying what `cong` did.
+    applyE-resp : ∀ ρ as r (f g : Fun as r) → Respects as r f g
+                → ∀ {es es′} → RSteps es es′
+                → R r (applyE ρ as r f es) (applyE ρ as r g es′)
+    applyE-resp ρ []       r u v w _  = w
+    applyE-resp ρ (a ∷ as) r f g w [] =
+      applyE-resp ρ as r (f (default a)) (g (default a))
+                  (w (Rrefl a (default a))) []
+    applyE-resp ρ (a ∷ as) r f g w (_∷_ {e} {e′} p ps) =
+      applyE-resp ρ as r (f (evalAt a ρ e)) (g (evalAt a ρ e′)) (w (p a ρ)) ps
+
+    -- Casts are R-monotone (identity on-sort, `default`/`Rrefl` off-sort).
+    -- (`with r ≟ s` captures `cast`'s own stuck with-argument, so the
+    -- goal reduces further than expected: the branches are just `p` and
+    -- `Rrefl s (default s)`.)
+    cast-mono : ∀ r s {x y : ⟦ r ⟧} → R r x y → R s (cast r s x) (cast r s y)
+    cast-mono r s p with r ≟ s
+    ... | yes refl = p
+    ... | no _     = Rrefl s (default s)
+
+    -- `op-cong`'s twin.
+    op-mono : ∀ o s → Respects (argSorts o) (resSort o) (impl o) (impl o)
+            → ∀ {es es′} → RSteps es es′ → RStep (op o s es) (op o s es′)
+    op-mono o s w ps s′ ρ =
+      cast-mono s s′ (cast-mono (resSort o) s
+        (applyE-resp ρ (argSorts o) (resSort o) (impl o) (impl o) w ps))
+
+    ----------------------------------------------------------------
+    -- One R-rewrite step: rules at the root, else descend through ops
+    -- that carry a monotonicity witness (leftmost-outermost).
+    ----------------------------------------------------------------
+
+    mutual
+      rewriteR₁ : RRules → MonoTable → (e : Expr) → Maybe (Σ Expr (RStep e))
+      rewriteR₁ rrs mt e with tryRulesR rrs e
+      ... | just s  = just s
+      ... | nothing = rewriteRSub rrs mt e
+
+      rewriteRSub : RRules → MonoTable → (e : Expr) → Maybe (Σ Expr (RStep e))
+      rewriteRSub rrs mt (var i s)   = nothing
+      rewriteRSub rrs mt (op o s es) with lookupMono mt o
+      ... | nothing = nothing
+      ... | just w with rewritesR₁ rrs mt es
+      ...   | nothing         = nothing
+      ...   | just (es′ , ps) = just (op o s es′ , op-mono o s w ps)
+
+      rewritesR₁ : RRules → MonoTable → (es : List Expr)
+                 → Maybe (Σ (List Expr) (RSteps es))
+      rewritesR₁ rrs mt []       = nothing
+      rewritesR₁ rrs mt (e ∷ es) with rewriteR₁ rrs mt e
+      ... | just (e′ , p) = just (e′ ∷ es , p ∷ rRefls es)
+      ... | nothing with rewritesR₁ rrs mt es
+      ...   | just (es′ , ps) = just (e ∷ es′ , rRefl e ∷ ps)
+      ...   | nothing         = nothing
+
+    ----------------------------------------------------------------
+    -- Reach the target: interleave ≡-normalisation (the untouched
+    -- engine) with single R-steps; stop when the ≡-normal form is
+    -- syntactically the target.  No symmetry anywhere: the caller
+    -- ≡-normalises the target with the ≡-engine (whose steps flip with
+    -- ≡'s own `sym`).
+    ----------------------------------------------------------------
+
+    rreach : ℕ → Rules → RRules → MonoTable → (tgt e : Expr) → Maybe (RStep e tgt)
+    rreach n rs rrs mt tgt e with simplify n rs [] e
+    rreach n rs rrs mt tgt e | (e₁ , p₁) with eqExpr? e₁ tgt
+    rreach n rs rrs mt tgt e | (e₁ , p₁) | just eq =
+      just (subst (RStep e) eq (embedStep e e₁ p₁))
+    rreach zero    rs rrs mt tgt e | (e₁ , p₁) | nothing = nothing
+    rreach (suc m) rs rrs mt tgt e | (e₁ , p₁) | nothing
+      with rewriteR₁ rrs mt e₁
+    ... | nothing       = nothing
+    ... | just (e₂ , q) with rreach m rs rrs mt tgt e₂
+    ...   | nothing = nothing
+    ...   | just w  = just (rTrans e e₁ tgt (embedStep e e₁ p₁) (rTrans e₁ e₂ tgt q w))
+
+    rsolve : ℕ → Rules → RRules → MonoTable → (l r : Expr) → Maybe (RStep l r)
+    rsolve n rs rrs mt l r with simplify n rs [] r
+    ... | (r′ , q) with rreach n rs rrs mt r′ l
+    ...   | nothing = nothing
+    ...   | just p  =
+            just (λ s ρ → subst (R s (evalAt s ρ l)) (sym (q s ρ)) (p s ρ))
+
+    rsolveAt : (g : ℕ) → ℕ → Rules → RRules → MonoTable → (l r : Expr)
+             → Maybe (R g (evalAt g ρ₀ l) (evalAt g ρ₀ r))
+    rsolveAt g n rs rrs mt l r with rsolve n rs rrs mt l r
+    ... | just p  = just (p g ρ₀)
+    ... | nothing = nothing
 
 ----------------------------------------------------------------
 -- Maybe extraction that forces the solver at type-checking time.

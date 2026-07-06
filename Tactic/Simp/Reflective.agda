@@ -1837,6 +1837,238 @@ private
         unifyWithGoal
           (buildRelProof relN prefix p1 p2 core lhsNFterm rhs changedL changedR)
 
+  ----------------------------------------------------------------
+  -- `simpRelR!`: relation rewriting on the VERIFIED preorder step layer
+  -- (`Core.Eval.WithRel`).  Unlike `simpRel!` (meta-level trans-chaining
+  -- of top-level ~-rules), this emits ONE application of the verified
+  -- `rsolveAt`, which does monotone congruence descent — so an R-step can
+  -- fire INSIDE an operator via a user-supplied monotonicity lemma.
+  --
+  -- Args: ≡-rule names, R-rule names (relation-valued lemmas like
+  -- `n≤1+n`), monotonicity-lemma names (like `+-mono-≤`), and the
+  -- relation's `RelInfo` (trans/refl).  The relation's head + prefix are
+  -- read off the goal, so `RelInfo` needs no extension.
+  --
+  -- v1 scope: single universe level (no `Lift`-ing); R-rules whose
+  -- binders are all determined by matching the lhs against goal subterms
+  -- (no polymorphic type/level parameters); reflexive-transitive
+  -- relations only (a strict `<` has no reflexivity, so it cannot embed
+  -- the ≡-normalisation steps — use its non-strict core).
+  ----------------------------------------------------------------
+
+  -- All subterms of a term, INCLUDING bare variables (unlike `subApps`,
+  -- which skips them).  R-rules like `n≤1+n` have a bare-variable lhs, so
+  -- the instance we need (`n ≤ 1 + n`) is obtained by matching against the
+  -- goal variable `n` — which must therefore be in the candidate pool.
+  mutual
+    allSubs : Term → List Term
+    allSubs t@(var _ as) = t ∷ allSubsArgs as
+    allSubs t@(def _ as) = t ∷ allSubsArgs as
+    allSubs t@(con _ as) = t ∷ allSubsArgs as
+    allSubs t@(lit _)    = t ∷ []
+    allSubs _            = []
+
+    allSubsArgs : Args Term → List Term
+    allSubsArgs []             = []
+    allSubsArgs (arg _ t ∷ as) = allSubs t ++ allSubsArgs as
+
+  -- `findAssignments` without the head filter: an R-rule lhs may be a
+  -- bare variable (no head), and we instantiate ALL binders (p = d) so
+  -- the emitted instances are var-free — a bare-var R-rule left with an
+  -- engine pattern variable would drive the greedy `rreach` chain to fuel
+  -- exhaustion.
+  findRAssignments : ℕ → ℕ → Term → List Term → List (List Term)
+  findRAssignments d p lhs []       = []
+  findRAssignments d p lhs (c ∷ cs) =
+    let rest = findRAssignments d p lhs cs
+    in case tryCandS d p lhs c of λ where
+         (just vs) → addUnique vs rest
+         nothing   → rest
+
+  eqArgsα : Args Term → Args Term → Bool
+  eqArgsα []             []             = true
+  eqArgsα (arg _ a ∷ as) (arg _ b ∷ bs) = (a =α= b) ∧ eqArgsα as bs
+  eqArgsα _              _              = false
+
+  -- Emit one `RRule` for a fully-instantiated (var-free) R-rule.  The
+  -- soundness witness reuses `mkSoundTerm` with NO pattern variables
+  -- (`is = []`): it is `λ τ → lemma val₁ … valₖ`, typechecking because
+  -- the closed lhs/rhs collapse under `evalAt` and the R-family reduces
+  -- (through `RFam`) to the goal relation at the goal sort.
+  processRRuleAssign : List Name → Name → Name → Args Term → List ArgInfo → St
+                     → List Term → TC (Maybe Term × St)
+  processRRuleAssign gh n goalRelN prefixG infos st vals =
+    catch (do
+      let pre = Data.List.zipWith arg infos vals
+      specTy ← inferType (def n pre)
+      case getRelSides specTy of λ where
+        (just (relN′ , prefix′ , lhsC , rhsC)) →
+          if not (relN′ == goalRelN) then return (nothing , st)
+          else if not (eqArgsα prefix′ prefixG) then return (nothing , st)
+          else (do
+            lhs′ ← realign gh (canonNums lhsC)
+            rhs′ ← realign gh (canonNums rhsC)
+            (lhsE , sta) ← conv 0 [] st lhs′
+            (rhsE , stb) ← conv 0 [] sta rhs′
+            lhsT ← quoteNorm lhsE
+            rhsT ← quoteNorm rhsE
+            let soundT = mkSoundTerm (hName n) pre []
+            return ( just (con (quote RC.Eval.WithRel.mkRRule)
+                             ( vArg lhsT ∷ vArg rhsT ∷ vArg (con (quote refl) [])
+                             ∷ vArg soundT ∷ [] ))
+                   , stb ))
+        nothing → return (nothing , st))
+      (λ _ → return (nothing , st))
+
+  processRRuleAssigns : List Name → Name → Name → Args Term → List ArgInfo → St
+                      → List (List Term) → TC (List Term × St)
+  processRRuleAssigns gh n goalRelN prefixG infos st []       = return ([] , st)
+  processRRuleAssigns gh n goalRelN prefixG infos st (v ∷ vs) = do
+    (mr , st₁) ← processRRuleAssign gh n goalRelN prefixG infos st v
+    (rs , st₂) ← processRRuleAssigns gh n goalRelN prefixG infos st₁ vs
+    return ((case mr of λ where (just r) → r ∷ rs ; nothing → rs) , st₂)
+
+  processRRule : List Name → Name → Args Term → List Term → Name → St
+               → TC (List Term × St)
+  processRRule gh goalRelN prefixG cands n st = do
+    ty ← getType n
+    (body , tel) ← stripAndReduce 100 ty
+    case getRelSides body of λ where
+      (just (relN′ , _ , lhsB , _)) →
+        if not (relN′ == goalRelN)
+          then return ([] , st)
+          else (let d = length tel
+                    asgns = findRAssignments d d lhsB cands
+                in processRRuleAssigns gh n goalRelN prefixG (map proj₁ tel) st asgns)
+      nothing → return ([] , st)
+
+  processRRules : List Name → Name → Args Term → List Term → List Name → St
+                → TC (List Term × St)
+  processRRules gh goalRelN prefixG cands []       st = return ([] , st)
+  processRRules gh goalRelN prefixG cands (n ∷ ns) st = do
+    (rs₁ , st₁) ← processRRule gh goalRelN prefixG cands n st
+    (rs₂ , st₂) ← processRRules gh goalRelN prefixG cands ns st₁
+    return (rs₁ ++ rs₂ , st₂)
+
+  -- `def n p₁ … pₙ` with pₖ = the k-th λ-bound variable (descending
+  -- de Bruijn), i.e. `n (var (n-1)) … (var 0)` under `wrapLams n`.
+  descVars : ℕ → Args Term
+  descVars = go
+    where
+      go : ℕ → Args Term
+      go zero    = []
+      go (suc k) = vArg (var k []) ∷ go k
+
+  -- One `MonoTable` entry for a monotonicity lemma.  Identify which op it
+  -- is about by reifying the head of its conclusion's lhs application
+  -- through the SHARED op table (so indices align with the goal's ops);
+  -- if the op is not in the goal, skip (no descent through it).  The
+  -- entry is `(opIdx , λ p₁ … pₙ → lemma p₁ … pₙ)`, whose type unfolds to
+  -- exactly the `Respects`/`_Preserves…_` shape and is checked at splice
+  -- time (a wrong lemma is a type error, never a false proof).
+  processMonoLemma : St → Name → TC (Maybe Term)
+  processMonoLemma st n =
+    catch (do
+      ty ← getType n
+      (body , tel) ← stripAndReduce 100 ty
+      let depth = length tel
+      case getRelSides body of λ where
+        (just (_ , _ , lhsApp , _)) → case lhsApp of λ where
+          (def f as) → tryHead depth (def f []) as
+          (con c as) → tryHead depth (con c []) as
+          _          → return nothing
+        nothing → return nothing)
+      (λ _ → return nothing)
+    where
+      tryHead : ℕ → Term → Args Term → TC (Maybe Term)
+      tryHead depth hd as =
+        if anyHiddenOpen depth as
+          then return nothing
+          else (let im = mkImpl depth false hd as
+                    k  = visibleCount as
+                in case findOpByImpl im (St.ops st) of λ where
+                     (just (o , _)) →
+                       return (just (quotePair (`ℕ o)
+                                 (wrapLams k (def n (descVars k)))))
+                     nothing → return nothing)
+
+  processMonoLemmas : St → List Name → TC (List Term)
+  processMonoLemmas st []       = return []
+  processMonoLemmas st (n ∷ ns) = do
+    m  ← processMonoLemma st n
+    ms ← processMonoLemmas st ns
+    return (case m of λ where (just t) → t ∷ ms ; nothing → ms)
+
+  -- The goal-sort `RelPack` value: the goal relation (with its prefix
+  -- baked in) plus the relation's reflexivity/transitivity.  Under the
+  -- two `λ x y` binders the goal-context prefix shifts by 2.
+  mkRelPackTerm : Name → Args Term → Name → Name → Term
+  mkRelPackTerm relN prefix relRefl relTrans =
+    let prefix² = map-Args (mapVars (_+ 2)) prefix
+        relT    = lam visible (abs "x" (lam visible (abs "y"
+                    (def relN (prefix² ++ vArg (var 1 []) ∷ vArg (var 0 []) ∷ [])))))
+        rrflT   = lam visible (abs "v" (def relRefl []))
+        rtrnT   = lam visible (abs "p" (lam visible (abs "q"
+                    (def relTrans (vArg (var 1 []) ∷ vArg (var 0 []) ∷ [])))))
+    in con (quote RC.Eval.mkRelPack) (vArg relT ∷ vArg rrflT ∷ vArg rtrnT ∷ [])
+
+  simpRelRGoal : ℕ → ℕ → RelInfo → List Name → List Name → List Name → ITactic
+  simpRelRGoal 0          _     _  _       _      _         = error1 "simpRelR!: goal has too many binders"
+  simpRelRGoal (suc fuel) depth ri eqNames rNames monoNames = do
+    hole ← goalHole
+    ty   ← inferType hole >>= reduce
+    case ty of λ where
+      (pi argTy@(arg (arg-info v _) _) (abs x bodyTy)) → do
+        hole′ ← extendContext (x , argTy) (newMeta bodyTy)
+        unifyStrict (hole , ty) (lam v (abs x hole′))
+        extendContext (x , argTy)
+          (runWithHole hole′ (simpRelRGoal fuel (suc depth) ri eqNames rNames monoNames))
+      _ → do
+        (just (relN , prefix , lhs₀ , rhs₀)) ← return (getRelSides ty)
+          where nothing → error1 "simpRelR!: goal is not a binary relation"
+        let lhs = canonNums lhs₀
+            rhs = canonNums rhs₀
+        -- (a) ≡-rules over both sides (reuse `simp!`'s handling).
+        eqCands ← enrichCandidates eqNames (subApps lhs ++ subApps rhs)
+        (ruleTs , st₁) ← processRules eqCands eqNames (mkSt [] [] nothing)
+        (lhsE , st₂) ← conv 0 [] st₁ lhs
+        (rhsE , st₃) ← conv 0 [] st₂ rhs
+        -- (b) R-rules, instantiated per goal subterm (var-free instances).
+        let gh     = headsOf (subApps lhs ++ subApps rhs)
+            rCands = allSubs lhs ++ allSubs rhs
+        (rruleTs , st₄) ← processRRules gh relN prefix rCands rNames st₃
+        -- (c) monotonicity table (op indices via the shared op table).
+        monoTs ← processMonoLemmas st₄ monoNames
+        fuelN ← stepFuel
+        lT ← quoteNorm lhsE
+        rT ← quoteNorm rhsE
+        TsT ← quoteSorts (St.sorts st₄)
+        let g          = RC.sortOf lhsE
+            fuelT      = `ℕ fuelN
+            opsT       = quoteOps (St.ops st₄)
+            rulesT     = quoteList ruleTs
+            rrulesT    = quoteList rruleTs
+            monoTableT = quoteList monoTs
+            relTableT  = quoteList
+              (quotePair (`ℕ g)
+                (mkRelPackTerm relN prefix (RelInfo.relRefl ri) (RelInfo.relTrans ri)) ∷ [])
+            rFamT      = def (quote RC.Eval.RFam)       (vArg TsT ∷ vArg opsT ∷ vArg relTableT ∷ [])
+            rFamReflT  = def (quote RC.Eval.RFam-refl)  (vArg TsT ∷ vArg opsT ∷ vArg relTableT ∷ [])
+            rFamTransT = def (quote RC.Eval.RFam-trans) (vArg TsT ∷ vArg opsT ∷ vArg relTableT ∷ [])
+            solveApp   = def (quote RC.Eval.WithRel.rsolveAt)
+              ( vArg TsT ∷ vArg opsT
+              ∷ vArg rFamT ∷ vArg rFamReflT ∷ vArg rFamTransT
+              ∷ vArg (`ℕ g) ∷ vArg fuelT
+              ∷ vArg rulesT ∷ vArg rrulesT ∷ vArg monoTableT
+              ∷ vArg lT ∷ vArg rT ∷ [] )
+        -- Pre-run to WHNF via `is-just` (never normalises the proof term).
+        nf ← normalise (def (quote Data.Maybe.is-just) (vArg solveApp ∷ []))
+        case nf of λ where
+          (con c _) → if c == quote Data.Bool.true
+            then unifyWithGoal (def (quote RC.from-just!) (vArg solveApp ∷ []))
+            else error1 "simpRelR!: simplification failed to close the goal"
+          _ → error1 "simpRelR!: simplification failed to close the goal (a decision could not reduce)"
+
 simpRTactic : List Name → ITactic
 simpRTactic names =
   -- Reconstructed syntax: without this, constructor parameters (e.g.
@@ -1866,6 +2098,13 @@ simpRelHTactic eqNames relNames hyps ri =
 
 simpRelTactic : List Name → List Name → RelInfo → ITactic
 simpRelTactic eqNames relNames ri = simpRelHTactic eqNames relNames [] ri
+
+-- Relation goals on the verified `WithRel` layer: ≡-rules, R-rules,
+-- monotonicity lemmas, the relation's trans/refl.
+simpRelRTactic : List Name → List Name → List Name → RelInfo → ITactic
+simpRelRTactic eqNames rNames monoNames ri =
+  local (λ env → record env { reconstruction = true })
+        (simpRelRGoal 100 0 ri eqNames rNames monoNames)
 
 -- TC options the macros install: carries the `simp/steps` fuel entry so
 -- `stepFuel` reads the (default 100) rewrite-step budget.
@@ -1909,6 +2148,17 @@ macro
   simpRel! : List Name → List Name → RelInfo → Tactic
   simpRel! eqNames relNames ri =
     initTacOpts (simpRelTactic eqNames relNames ri) simpTCOptions
+
+  -- Prove `lhs ~ rhs` on the VERIFIED preorder step layer
+  -- (`Core.Eval.WithRel`): emits one application of `rsolveAt`, which
+  -- interleaves ≡-normalisation with single R-steps and does monotone
+  -- congruence descent — so an R-step can fire INSIDE an operator via a
+  -- supplied monotonicity lemma (which `simpRel!` cannot do).  Args:
+  -- ≡-rules, R-rules (relation-valued lemmas), monotonicity lemmas, and
+  -- the relation's trans/refl info.
+  simpRelR! : List Name → List Name → List Name → RelInfo → Tactic
+  simpRelR! eqNames rNames monoNames ri =
+    initTacOpts (simpRelRTactic eqNames rNames monoNames ri) simpTCOptions
 
   -- Like `simpRel!` but also takes local ≡-hypotheses (a list literal or
   -- pair of hypothesis terms, deconstructed like `simpH!`).

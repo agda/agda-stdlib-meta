@@ -27,7 +27,8 @@ import Algebra.Bundles as AlgB
 open import Data.Nat using (ℕ; zero; suc; _+_; _*_; _∸_; _⊔_; _⊓_; _≤_; _≥_; _<_)
 open import Data.Nat.Properties
   using ( +-identityʳ; +-identityˡ; *-identityʳ; *-zeroʳ; +-assoc; +-comm
-        ; n∸n≡0; ⊔-comm; ≤-refl; ≤-trans; n≤1+n; m≤n⇒m⊓n≡m)
+        ; n∸n≡0; ⊔-comm; ≤-refl; ≤-trans; n≤1+n; m≤n⇒m⊓n≡m
+        ; +-mono-≤; *-mono-≤)
 open import Data.Vec using (Vec)
 open import Data.Product using (_×_; _,_; proj₁; proj₂)
 open import Data.Unit using (⊤; tt)
@@ -415,6 +416,50 @@ module MonoidTests {c ℓ} (M : AlgB.Monoid c ℓ) where
   -- associativity + identity (mirrors old Tactic.Simp testMonoid₄)
   tMon₄ : ∀ x y z → ((x ∙ y) ∙ z) ∙ ε ≈ x ∙ (y ∙ z)
   tMon₄ x y z = simpRel! [] (quote ∙-idʳ ∷ quote ∙-assoc ∷ []) M-info
+
+----------------------------------------------------------------
+-- G-R. Relation goals on the VERIFIED preorder step layer (`simpRelR!`).
+--
+-- `simpRelR!` emits ONE application of the verified `rsolveAt`
+-- (`Core.Eval.WithRel`), which interleaves ≡-normalisation with single
+-- R-steps AND does monotone congruence descent — so an R-step can fire
+-- inside an operator via a supplied monotonicity lemma.  Args: ≡-rules,
+-- R-rules, monotonicity lemmas, RelInfo.
+----------------------------------------------------------------
+
+-- Parity with `simpRel!`: ≡-step (n+0→n) then a root R-step (n ≤ 1+n).
+gGR₁ : ∀ {n : ℕ} → n + 0 ≤ 1 + n
+gGR₁ = simpRelR! (quote +-identityʳ ∷ []) (quote n≤1+n ∷ []) [] ≤-info
+
+-- Option-C style: no R-rule, just ≡-normalisation closed by reflexivity.
+gGR₂ : ∀ {n : ℕ} → n + 0 ≤ n
+gGR₂ = simpRelR! (quote +-identityʳ ∷ []) [] [] ≤-info
+
+-- Second relation (`≥` unfolds to its `≤` core under `reduce`, so the
+-- SAME `≤-info` drives it):  1 + n ≥ n + 0  ⇝  n + 0 ≤ 1 + n.
+gGR₃ : ∀ {n : ℕ} → 1 + n ≥ n + 0
+gGR₃ = simpRelR! (quote +-identityʳ ∷ []) (quote n≤1+n ∷ []) [] ≤-info
+
+-- NEW CAPABILITY: an R-step fires INSIDE `_+_` through the `+-mono-≤`
+-- monotonicity witness (the ≡-step n+0→n happens under the operator too).
+gGR₄ : ∀ {n m : ℕ} → (n + 0) + m ≤ (1 + n) + m
+gGR₄ = simpRelR! (quote +-identityʳ ∷ []) (quote n≤1+n ∷ []) (quote +-mono-≤ ∷ []) ≤-info
+
+-- NEW CAPABILITY, genuine discriminator: descent under `_*_` via
+-- `*-mono-≤`.  Unlike the `_+_` case above (which `simpRel!` ALSO closes,
+-- because meta-`normalise` collapses `(1+n)+m` and `1+(n+m)` to the same
+-- `suc (n+m)`), here `(1+n)*m` normalises to `m + n*m`, which does NOT
+-- match `1+(n*m)`, so the meta-chaining `simpRel!` fails ("could not
+-- connect the normal forms").  The verified engine instead rewrites
+-- `n → 1+n` in place, under `_*_`, reaching the target structurally.
+gGR₅ : ∀ {n m : ℕ} → (n + 0) * m ≤ (1 + n) * m
+gGR₅ = simpRelR! (quote +-identityʳ ∷ []) (quote n≤1+n ∷ []) (quote *-mono-≤ ∷ []) ≤-info
+
+-- NEGATIVE (documented; fails cleanly).  `5 + 0 ≤ 3` is false, so no
+-- rewrite chain closes it and the pre-run guard reports:
+--   simpRelR!: simplification failed to close the goal
+--   neg : 5 + 0 ≤ 3
+--   neg = simpRelR! (quote +-identityʳ ∷ []) (quote n≤1+n ∷ []) [] ≤-info
 
 ----------------------------------------------------------------
 -- H. Universe levels
