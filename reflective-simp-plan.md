@@ -702,3 +702,160 @@ prefix arg); `shouldDrop` drops a leading visible arg α-equal (after
 arg, so `M` (higher universe level than the carrier) never becomes a
 sort. Tests `tMon₁`–`tMon₄`. This was the last hold-out for deprecating
 the lossy `Tactic.Simp` — that deprecation is now unblocked.
+
+## Investigation: proof-search algorithms (2026-07-06)
+
+Question: what should replace/augment the engine's greedy search?
+Current search = leftmost-outermost, first matching rule, fuel-bounded,
+with two heuristics (the `ltExpr` gate orienting permutative rules;
+`prioritize` trying non-permutative rules first).  Complete only for
+confluent+terminating rule sets — `prioritize` exists because greedy
+search in a non-confluent system is order-dependent (campaign fix 4),
+and comm+distributivity explodes it (Bench).
+
+**Architectural conclusion (the part that matters): split PROPOSING from
+CHECKING.**  Because the design is already "meta proposes, object
+verifies", the search need not live in the verified core.  The enabling
+refactor is a verified *script replayer* in Core: a `Path` type (which
+subterm) + `applyAt : List (Path × ruleIdx) → …` checking each proposed
+step exactly as `tryRule` does.  Any unverified meta-level searcher then
+just emits a script; search upgrades become frontend swaps with zero
+proof burden.  Candidate proposers, in order of practical value:
+
+1. **Greedy + ordered rewriting** (current): correct default for
+   simp-style sets (user-oriented, mostly terminating); Isabelle's
+   production answer.  Keep.
+2. **Critical-pair diagnostics** (the useful half of Knuth-Bendix):
+   don't run completion (expensive, divergent); DO compute critical
+   pairs of the user's rule set at macro time and have `simp?` warn
+   "rules overlap non-joinably — result may be rule-order-dependent".
+   Converts the `prioritize` class of silent failures into explained
+   ones.
+3. **Equality saturation (e-graphs, egg PLDI'21)**: non-destructive —
+   apply all rules into an e-graph to saturation/limit, check the sides
+   share an e-class, extract the rewrite sequence, replay verified.
+   The modern answer for AC-ish sets where destructive rewriting loses.
+   RISK: no external-binary escape hatch (Lean's `egg` ships one), so
+   the e-graph runs in the TC monad — union-find-heavy structures vs the
+   reflection evaluator's known perf traps (threaded-index OOM,
+   Tier-1 item 1).  Prototype against the 12-rule bench before
+   committing.
+4. **Bounded memoized search** (iterative deepening + seen-set): the
+   cheap fix for rule-order-dependence without e-graphs; meta-only.
+5. **R-layer (preorders)**: reachability in a quasi-order, NOT
+   normalisation — no normal forms exist.  `rreach`'s shape (DFS, fuel,
+   ≡-normalise between R-steps) is right; useful additions are A* on
+   term size and the (already load-bearing) targeted var-free
+   instantiation of expanding rules like `n≤1+n`.
+6. **Conditional rules**: keep decidable-only firing (non-branching) as
+   long as possible; Lean/Isabelle-style recursive discharge = a
+   `maxDischargeDepth`-bounded solver, deferred until a real goal
+   demands it.
+
+Recommended order: script-replayer in Core (small, enables everything) →
+critical-pair diagnostics in `simp?` → e-graph proposer as gated
+research.
+
+## Investigation: goal-simplifying simp (2026-07-06) — WORKS, spiked
+
+Question: can `f (simp! {!!})` leave the hole expecting a SIMPLER type
+(goal `0 + x + 0 ≡ y` → residual `x ≡ y`)?  **Yes** — verified in
+`GoalSimpSpike.agda` (standalone, untracked, typechecks):
+
+- Mechanism: the macro reads the complicated expected type via
+  `inferType hole`, simplifies it, builds a VERIFIED adapter
+  simple→complicated, `checkType`s the user's argument (term or
+  interaction hole) at the simple type, and unifies the adapter
+  application into the outer hole.  `checkType` is what first constrains
+  an interaction-hole argument, so `{!!}`'s displayed goal becomes the
+  simplified type.
+- Tests passing: `h : x ≡ y` accepted where `x + 0 ≡ y` expected;
+  `refl {x = x}` accepted where `x + 0 ≡ x` expected.
+- Integration is cheap: for `l ≡ r` the engine ALREADY returns the
+  normal form + verified step (`simplifyEq`); the adapter is
+  `trans (step l) (trans HOLE (sym (step r)))` with residual
+  `nf(l) ≡ nf(r)` — i.e. `simp!` minus the final `eqExpr?` requirement,
+  reusing reification/rules/fallbacks verbatim.  It also upgrades
+  `simp!`'s failure mode: instead of "failed to close", hand back the
+  residual goal (suggested name `simp⊢!`).
+- Non-≡ goal types (redex inside arbitrary `P (…)`): adapter becomes a
+  `subst`-motive transport — the "proof-term shell" design; v2.
+- Pitfall found: NOTES #15 (frozen macro-argument implicit metas; bare
+  `refl` needs `refl {x = x}`; holes unaffected).
+
+## Testing campaign: simpRelR! limitations + performance (2026-07-06)
+
+~20 probes against the new verified preorder layer (`simpRelR!`), plus
+aggregate timings.  One frontend bug found and FIXED; the rest are
+documented limitations (commented negatives in Tests G-R).
+
+### Works (beyond the shipped G-R tests)
+
+- **Chained R-steps**: 2-rule chains (`m ∸ n ≤ suc m`), 3- and 8-step
+  same-rule chains (`n ≤ suc⁸ n`) — each suc-layer of the goal is a
+  candidate, so per-layer instances exist.
+- **Two-level monotone descent** (`((n+0)*m)*k ≤ ((1+n)*m)*k`) and
+  5-level; ≡-work in sibling arguments of the R-step's operator.
+- **Multi-sorted goals with the ≡-fallback** (`length (xs ++ []) ≤
+  1 + length xs` — list sort falls back to ≡ in `RFam`).
+- **Heterogeneous monotonicity**: element sort by ≡, list sort by ↭,
+  with a polymorphic R-rule (`++-comm`) — `x ∷ (xs ++ ys) ↭ x ∷ (ys ++ xs)`
+  via a user `∷-mono↭ : x ≡ y → xs ↭ ys → …` witness (test gGR₇).
+- **`<`-alias goals** (unfold to the ≤ core), when suc-spelled.
+- **Conditional ≡-rules** (goal-present, by-assumption discharge) work
+  UNCHANGED through simpRelR! — it reuses `processRules`, so
+  `∀ {m n} → m ≤ n → (m ⊓ n) + 0 ≤ m` closes.  (In-engine `CondRule`s
+  are still not threaded into `rsolve` — materialised-redex conditions
+  remain simp!-only.)
+
+### Fixed during the campaign
+
+- **`realignRel`**: lemmas re-exported through module applications
+  (e.g. `m⊓n≤m` via `Algebra.Construct.NaturalChoice`) state their WHOLE
+  conclusion through record projections (`MinOp._≲_ …`), so the
+  relation-head guard skipped them before matching.  One guarded
+  `reduce` of the rule conclusion (kept only if the head becomes the
+  goal relation), applied in `processRRule` and `processRRuleAssign`.
+  Regression test gGR₆.  (The lhs-side `realign`+`canonNums` before
+  `findRAssignments` went in with it.)
+
+### Limitations (documented, not fixed)
+
+1. **Numeral towers**: `n ≤ 3 + n` fails — `reduce` (WHNF) leaves
+   `2 + n` opaque, and intermediate chain terms must be goal-subterm
+   instances; `n ≤ suc (suc (suc n))` closes.  This is the R-mirror of
+   the candidate-enrichment gap (item 10) and of the materialised-redex
+   problem: `rreach` only passes through terms built from goal-subterm
+   instances.
+2. **Rhs-only rule variables** never instantiate (`m≤m+n`) — same class
+   as the documented ≡ limitation.
+3. **Abstract monoid `≈` / bundle ops**: unsupported, and the failure
+   is an unclean `UnequalSorts` level error (no opDrop/Lift in
+   simpRelR! — v1 single-level scope).  Error-quality gap.
+4. **Non-jointly-monotone lemmas** (`+-monoˡ-≤`, `Preserves` sections)
+   are SILENTLY skipped — no witness, no descent, no warning.  Needs
+   either a diagnostic or the variance-vector design.
+5. Untested-by-construction (v1 exclusions): converse-orientation RHS
+   chaining, contravariant positions, permutative R-rules, R-CondRules.
+
+### Performance (wall-clock deltas over an ~8.8 s stdlib-load baseline)
+
+| probe | net cost |
+|---|---|
+| trivial `simpRelR!` call | ~0.2 s |
+| single root R-step | ~0.4 s |
+| gGR₅ (descent under `*`) | ~1.2 s |
+| 5-level descent | ~1.0 s |
+| 8-step chain | ~1.4 s |
+| 4 R-rules + 2 mono lemmas | ~2.2 s |
+| 5-level goal × 3 R-rules × 2 monos | ~2.4 s |
+| UNPROVABLE goal (fail path) | ~0 s (fail-fast: instances bound the chain) |
+| CondTests.agda whole file | ~0.6 s net |
+| Tests.agda whole file (~60 calls) | ~8 s net (≈0.14 s/call avg) |
+
+No blowup cliff at these scales; R-instance count grows with
+(#R-rules × #goal subterms), so very large goals with many R-rules are
+the dimension to watch (same regime as the documented ≲15-rule simp!
+budget).  A cyclic instance pair (a ≤ b and b ≤ a both instantiated)
+could in principle loop the greedy chain until fuel — not constructed
+in this campaign; the fuel bound caps it at 100 steps regardless.

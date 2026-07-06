@@ -1890,6 +1890,19 @@ private
   eqArgsα (arg _ a ∷ as) (arg _ b ∷ bs) = (a =α= b) ∧ eqArgsα as bs
   eqArgsα _              _              = false
 
+  -- Re-align a rule CONCLUSION whose relation head is not the goal's:
+  -- re-exported lemmas (e.g. `m⊓n≤m`, via `Algebra.Construct.NaturalChoice`
+  -- module applications) state their whole conclusion through record
+  -- projections (`MinOp._≲_ …`, `MinOperator.⊓ …`), which `getRelSides`
+  -- would attribute to the wrong relation.  One guarded `reduce` unfolds
+  -- the projections; the caller's `relN′ == goalRelN` check keeps the
+  -- result only if it now IS the goal relation.
+  realignRel : Name → Term → TC Term
+  realignRel goalRelN body = case getRelSides body of λ where
+    (just (relN′ , _ , _ , _)) →
+      if relN′ == goalRelN then return body else reduce body
+    nothing → reduce body
+
   -- Emit one `RRule` for a fully-instantiated (var-free) R-rule.  The
   -- soundness witness reuses `mkSoundTerm` with NO pattern variables
   -- (`is = []`): it is `λ τ → lemma val₁ … valₖ`, typechecking because
@@ -1900,7 +1913,8 @@ private
   processRRuleAssign gh n goalRelN prefixG infos st vals =
     catch (do
       let pre = Data.List.zipWith arg infos vals
-      specTy ← inferType (def n pre)
+      specTy₀ ← inferType (def n pre)
+      specTy ← realignRel goalRelN specTy₀
       case getRelSides specTy of λ where
         (just (relN′ , prefix′ , lhsC , rhsC)) →
           if not (relN′ == goalRelN) then return (nothing , st)
@@ -1932,14 +1946,22 @@ private
                → TC (List Term × St)
   processRRule gh goalRelN prefixG cands n st = do
     ty ← getType n
-    (body , tel) ← stripAndReduce 100 ty
+    (body₀ , tel) ← stripAndReduce 100 ty
+    body ← extendCtxTel tel (realignRel goalRelN body₀)
     case getRelSides body of λ where
       (just (relN′ , _ , lhsB , _)) →
         if not (relN′ == goalRelN)
           then return ([] , st)
-          else (let d = length tel
-                    asgns = findRAssignments d d lhsB cands
-                in processRRuleAssigns gh n goalRelN prefixG (map proj₁ tel) st asgns)
+          else (do
+            -- Re-align + canonicalise the lhs BEFORE candidate matching:
+            -- re-exported lemmas (e.g. `m⊓n≤m`, via a module application)
+            -- spell their operator as a record projection, which would
+            -- never match a goal candidate (the ≡-path realigns at `conv`
+            -- time; the matching-based R-path must do it here).
+            lhsB′ ← extendCtxTel tel (realign gh lhsB)
+            let d = length tel
+                asgns = findRAssignments d d (canonNums lhsB′) cands
+            processRRuleAssigns gh n goalRelN prefixG (map proj₁ tel) st asgns)
       nothing → return ([] , st)
 
   processRRules : List Name → Name → Args Term → List Term → List Name → St

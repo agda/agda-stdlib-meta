@@ -168,3 +168,14 @@ these four rules before touching anything else.
     proved by `λ h → simp! …` (there `h` is a *call-site* var, in
     `globalContext`).  Probe with `checkType (var i []) premiseTy` per index
     and take the first that does not throw.
+
+15. **Macro-argument implicit metas freeze at the quoting boundary** —
+    a macro argument is elaborated (pitfall 9) and its unsolved implicit
+    metas are FROZEN before the macro body runs.  A later `checkType` of
+    the quoted argument at a type that WOULD determine them (e.g. checking
+    a bare `refl` at `x ≡ x`) leaves the original metas unsolved →
+    "Unsolved metas" at the argument's source location.  Consequence for
+    hole-taking macros (`GoalSimpSpike.agda`): interaction holes `{!!}`
+    and variables work; bare closed implicit-heavy terms (`refl`) need
+    call-site bindings (`refl {x = x}`) that let the ARGUMENT elaboration
+    solve the implicits itself.

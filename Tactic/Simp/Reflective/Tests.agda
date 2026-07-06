@@ -21,13 +21,13 @@ open import Data.List using (List; []; _∷_; _++_; map; length; reverse)
 open import Data.List.Properties
   using (++-identityʳ; map-id; reverse-involutive; length-map)
 open import Data.List.Relation.Binary.Permutation.Propositional
-  using (_↭_; ↭-refl; ↭-trans)
+  using (_↭_; ↭-refl; ↭-trans; prep)
 import Data.List.Relation.Binary.Permutation.Propositional.Properties as ↭Prop
 import Algebra.Bundles as AlgB
 open import Data.Nat using (ℕ; zero; suc; _+_; _*_; _∸_; _⊔_; _⊓_; _≤_; _≥_; _<_)
 open import Data.Nat.Properties
   using ( +-identityʳ; +-identityˡ; *-identityʳ; *-zeroʳ; +-assoc; +-comm
-        ; n∸n≡0; ⊔-comm; ≤-refl; ≤-trans; n≤1+n; m≤n⇒m⊓n≡m
+        ; n∸n≡0; ⊔-comm; ≤-refl; ≤-trans; n≤1+n; m≤n⇒m⊓n≡m; m⊓n≤m
         ; +-mono-≤; *-mono-≤)
 open import Data.Vec using (Vec)
 open import Data.Product using (_×_; _,_; proj₁; proj₂)
@@ -455,11 +455,43 @@ gGR₄ = simpRelR! (quote +-identityʳ ∷ []) (quote n≤1+n ∷ []) (quote +-m
 gGR₅ : ∀ {n m : ℕ} → (n + 0) * m ≤ (1 + n) * m
 gGR₅ = simpRelR! (quote +-identityʳ ∷ []) (quote n≤1+n ∷ []) (quote *-mono-≤ ∷ []) ≤-info
 
--- NEGATIVE (documented; fails cleanly).  `5 + 0 ≤ 3` is false, so no
--- rewrite chain closes it and the pre-run guard reports:
---   simpRelR!: simplification failed to close the goal
+-- gGR₆ TWO chained root R-steps, the first from a lemma whose whole
+-- conclusion is projection-spelled (`m⊓n≤m` re-exported through
+-- `Algebra.Construct.NaturalChoice` states `MinOp._≲_ … (MinOperator.⊓ …)`)
+-- — exercises `realignRel` (campaign fix, 2026-07-06).
+gGR₆ : ∀ {m n : ℕ} → m ⊓ n ≤ suc m
+gGR₆ = simpRelR! [] (quote m⊓n≤m ∷ quote n≤1+n ∷ []) [] ≤-info
+
+-- gGR₇ heterogeneous monotonicity: the list sort carries ↭, the element
+-- sort falls back to ≡ (RFam), and the R-rule (++-comm) is polymorphic.
+private
+  ∷-mono↭ : ∀ {x y : ℕ} {xs ys : List ℕ} → x ≡ y → xs ↭ ys → x ∷ xs ↭ y ∷ ys
+  ∷-mono↭ refl p = prep _ p
+
+gGR₇ : ∀ (x : ℕ) (xs ys : List ℕ) → x ∷ (xs ++ ys) ↭ x ∷ (ys ++ xs)
+gGR₇ x xs ys = simpRelR! [] (quote ↭Prop.++-comm ∷ []) (quote ∷-mono↭ ∷ []) ↭-info
+
+-- NEGATIVE / LIMITATIONS (documented; all observed 2026-07-06):
+-- False goal — fails cleanly ("simpRelR!: simplification failed to close
+-- the goal"), and FAST: var-free instances bound the R-chain, so an
+-- unprovable goal cannot burn the fuel:
 --   neg : 5 + 0 ≤ 3
 --   neg = simpRelR! (quote +-identityʳ ∷ []) (quote n≤1+n ∷ []) [] ≤-info
+-- Numeral towers: `n ≤ 3 + n` FAILS (the intermediate `1 + n`, `2 + n`
+-- are not goal subterms, so no instances exist for the middle steps —
+-- the R-mirror of the candidate-enrichment gap), while the suc-spelled
+-- `n ≤ suc (suc (suc n))` closes (every layer is a candidate):
+--   negNum : ∀ {n : ℕ} → n ≤ 3 + n
+--   negNum = simpRelR! [] (quote n≤1+n ∷ []) [] ≤-info
+-- Rhs-only rule variables never instantiate (same class as the ≡ rule
+-- limitation): `m≤m+n : m ≤ m + n` has `n` only on the rhs:
+--   negRhs : ∀ {m n : ℕ} → m ≤ suc (m + n)
+--   negRhs = simpRelR! [] (quote m≤m+n ∷ quote n≤1+n ∷ []) [] ≤-info
+-- Abstract monoid `≈` (bundle ops/mixed levels) is unsupported and the
+-- failure is an UNCLEAN level error (`UnequalSorts`), not the macro's
+-- message — simpRelR! has no opDrop/Lift machinery yet.
+-- Non-jointly-monotone lemmas (e.g. `+-monoˡ-≤`, a `Preserves` section)
+-- are silently skipped: the rule set behaves as if no witness was given.
 
 ----------------------------------------------------------------
 -- H. Universe levels
