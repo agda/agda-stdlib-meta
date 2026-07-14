@@ -2,6 +2,12 @@
 
 Browse the Agda code in HTML [here](https://agda.github.io/agda-stdlib-meta).
 
+## Ring solver (`Tactic.Solver.Ring`)
+
+`solve-≈` is a reflection-based solver for commutative-(semi)ring
+equalities. See the [ring solver
+documentation](Tactic/Solver/Ring.lagda.md).
+
 ## Version compatibility
 
 We mirror the version numbers of [agda-stdlib](https://github.com/agda/agda-stdlib).

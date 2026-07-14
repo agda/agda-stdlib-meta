@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - '**.agda'
+      - '**.lagda.md'
       - '*.agda-lib'
       - '.github/workflows/**.yml'
     branches: [master]
