@@ -25,3 +25,7 @@ open import Tactic.Derive.Convertible public
 
 open import Tactic.Solver.Ring
 open import Tactic.Solver.Ring.Tests
+
+open import Tactic.Solver.FirstOrder
+open import Tactic.Solver.FirstOrder.Tests
+import Tactic.FirstOrder.Decide
