@@ -71,6 +71,14 @@ data N₂ where
   n₂  : N₂
   n₁→₂ : N₁ → N₂
 
+-- Two constructors with the same wrapper chain (`List N₃`).
+-- Deduplicating the discovered chains must not evaluate a pair-level
+-- decidable equality: its proof normalisation explodes on reflection
+-- names. Guards the Boolean dedup in `genMutualHelpers`.
+data N₃ : Set where
+  n₃ˡ : List N₃ → N₃
+  n₃ʳ : List N₃ → N₃
+
 AllTestTypes : List Name
 AllTestTypes = quote E0 ∷ quote E1 ∷ quote E2 ∷ quote E3 ∷ quote R1 ∷ quote R2 ∷ quote M₁ ∷ quote M₂ ∷ quote E5 ∷ []
 
