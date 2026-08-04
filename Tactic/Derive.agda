@@ -45,7 +45,6 @@ instance
   _ = ContextMonad-MonadTC
   _ = Functor-M {M = TC}
   _ = Show-List
-  _ = DecEq-×
 
 open ClauseExprM
 
@@ -159,11 +158,24 @@ open AllChainsTo using (allChainsTo)
 -- Collect all non-empty wrapper chains (tagged with their terminating
 -- seed) discovered in the constructors arguments of the constructors
 -- of any seed.
+-- Boolean equality on chain entries. Deliberately NOT the decidable
+-- `_≟_` on pairs: `≡-dec` on Σ-types matches on the equality proof of
+-- the first component, and normalising equality proofs between
+-- reflection `Name`s goes through `Word64`/`ℕ` proofs whose normal
+-- forms are astronomically large, blowing up the type checker.
+eqChainEntry : WrapperChain × Name → WrapperChain × Name → Bool
+eqChainEntry (c , t) (c' , t') = eqChain c c' ∧ (t ≡ᵇ t')
+  where
+    eqChain : WrapperChain → WrapperChain → Bool
+    eqChain []       []         = true
+    eqChain (n ∷ ns) (n' ∷ ns') = (n ≡ᵇ n') ∧ eqChain ns ns'
+    eqChain _        _          = false
+
 genMutualHelpers : List Name → TC (List (WrapperChain × Name))
 genMutualHelpers ns = do
   tysPerSeed ← traverse
     (λ n → L.map (unArg ∘ unAbs) <$> (L.concatMap (proj₁ ∘ viewTy ∘ proj₂) <$> getConstrs n)) ns
-  return $ deduplicate _≟_ $ L.concatMap (allChainsTo ns) $ concat tysPerSeed
+  return $ L.deduplicateᵇ eqChainEntry $ L.concatMap (allChainsTo ns) $ concat tysPerSeed
 
 module _ (arity : ℕ) (genCe : (Term → Maybe Name) → List SinglePattern → List (NE.List⁺ SinglePattern × TC (ClauseExpr ⊎ Maybe Term))) where
   -- Generate the declaration & definition of a particular derivation.
