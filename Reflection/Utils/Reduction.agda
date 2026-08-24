@@ -49,6 +49,18 @@ open import Reflection.AST.Definition using (function)
 open import Reflection.AST.AlphaEquality using (_=α=_)
 import Agda.Builtin.Reflection as B using (withReduceDefs)
 
+-- Weak-head reduce only when the head can actually reduce (`def` or
+-- `meta`); every other head is already weak-head normal. This is not
+-- just an optimisation: `reduce` on a bare constructor of a
+-- *parameterized* datatype must reconstruct the term's type, which
+-- mints fresh metavariables for the parameters (`[]` gets `List ?A`).
+-- Nothing ever constrains them, and they surface as "unsolved metas"
+-- at the end of the calling declaration.
+whnfIfReducible : Term → TC Term
+whnfIfReducible t@(def _ _)  = reduce t
+whnfIfReducible t@(meta _ _) = reduce t
+whnfIfReducible t            = pure t
+
 -- Weak-head normalisation with white/blacklisted names
 whnfBlocking : List Name → Term → TC Term
 whnfBlocking ns t = B.withReduceDefs (false , ns) (reduce t)

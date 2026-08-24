@@ -26,9 +26,9 @@ open import Meta.Prelude
 
 import Data.Maybe as Maybe
 import Data.Fin as Fin
-open import Data.List using (map; findIndexᵇ)
+open import Data.List
 open import Reflection
-open import Reflection.AST.AlphaEquality using (_=α=_)
+open import Reflection.AST.AlphaEquality
 
 Atom : Set
 Atom = Term × Term   -- (original spelling , whnf key)
@@ -70,3 +70,37 @@ insertAtom t (a ∷ as) = if t =α= a then a ∷ as else a ∷ insertAtom t as
 
 findAtomIndex : Term → List Term → Maybe ℕ
 findAtomIndex t xs = Maybe.map Fin.toℕ (findIndexᵇ (t =α=_) xs)
+
+------------------------------------------------------------------------
+-- Sort-grouped atom store.
+--
+-- Dual-key atoms partitioned by a *sort key* (a Term, compared up to
+-- α-equality): the multi-sorted tier used by `Tactic.Solver.Core`.
+-- Group order is first-discovery order and within-group order is
+-- insertion order. An atom's flat position (its binder in emitted
+-- terms) does depend on the final group sizes; that arithmetic lives
+-- in `Tactic.Solver.Core.Indexing`.
+
+SortedAtomStore : Set
+SortedAtomStore = List (Term × AtomStore)
+
+insertSortedStore : (sortKey : Term) → Atom → SortedAtomStore → SortedAtomStore
+insertSortedStore k a []               = (k , insertAtomStore a []) ∷ []
+insertSortedStore k a ((k' , s) ∷ rest) =
+  if k =α= k'
+    then (k' , insertAtomStore a s) ∷ rest
+    else (k' , s) ∷ insertSortedStore k a rest
+
+sortedStoreIndex : (sortKey : Term) → Atom → SortedAtomStore → Maybe (ℕ × ℕ)
+sortedStoreIndex k a []                = nothing
+sortedStoreIndex k a ((k' , s) ∷ rest) =
+  if k =α= k'
+    then Maybe.map (λ i → 0 , i) (atomStoreIndex a s)
+    else Maybe.map (λ (g , i) → suc g , i) (sortedStoreIndex k a rest)
+
+sortedGroupSizes : SortedAtomStore → List ℕ
+sortedGroupSizes = map (length ∘ proj₂)
+
+-- All spellings, flattened in (group , slot) order.
+sortedSpellings : SortedAtomStore → List Term
+sortedSpellings = concatMap (atomSpellings ∘ proj₂)

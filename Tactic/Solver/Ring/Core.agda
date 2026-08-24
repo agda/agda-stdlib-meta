@@ -53,7 +53,8 @@ open import Reflection.Utils.Core      using (extractNat)
 open import Reflection.Utils.Records
   using (fieldProjection; projectField)
 
-open import Tactic.Solver.Algebra
+open import Tactic.Solver.Core
+open import Tactic.Solver.Core.StdlibBackend
 import Tactic.Solver.Ring.IntegerCoefficients as IntC
 
 module NatC {c ℓ} (R : CommutativeSemiring c ℓ) where
@@ -86,20 +87,11 @@ private
 ------------------------------------------------------------------------
 -- Polynomial-AST encoders. Every backend name re-exported by
 -- `NatC`/`IntC` has telescope `{c ℓ} (R) {n} → … Polynomial n …`,
--- where the hidden `n` is the expression type's variable-count
--- index — equal to the atom count. Each emitted node instantiates
--- `R` and `n` explicitly:
---   `def NAME (2 hidden ∷ R ⟨∷⟩ numAtoms ⟅∷⟆ ⟨args…⟩)`.
+-- where the hidden `n` is the expression type's variable-count index
+-- — equal to the atom count; `defP`/`opEnc` instantiate `R` and `n`
+-- explicitly per emitted node.
 
 private
-  defP : EncodeEnv → Name → List Term → Term
-  defP env nm args =
-    def nm (2 ⋯⟅∷⟆ EncodeEnv.R↓↓ env ⟨∷⟩ toTerm (EncodeEnv.numAtoms env) ⟅∷⟆ List.map vArg args)
-
-  -- A `def`-headed backend operator, applied to the encoded operands.
-  opEnc : ∀ {n} → Name → EncodeEnv → Vec Term n → Term
-  opEnc nm env args = defP env nm (Vec.toList args)
-
   -- ℕ literal `n` rendered at the polynomial-coefficient type:
   -- ℕ for CSR (`toTerm n`), ℤ for CR (wrapped with `+_`).
   natLitTerm : RingSide → ℕ → Term
@@ -209,8 +201,10 @@ private
       { operators    = operatorsOf slotted
       ; literalSpec  = mkLiteralSpec side ls
       ; blockedNames = blockedOf slotted
+      ; constants    = constantsOf slotted
+      ; sortOf       = nothing
       ; encodeEq     = λ env x y → defP env (eqName side) (x ∷ y ∷ [])
-      ; finishSolve  = finish
+      ; finishSolve  = finishViaSolve (solveName side) (reflName side)
       })
     where
     numParams : ℕ
@@ -228,14 +222,6 @@ private
           o' ← reduce o
           pure (detectLitStyle z' o')
         _ → pure nothing
-
-    finish : EncodeEnv → Term → List Term → Term
-    finish env body atoms =
-      def (solveName side)
-        (2 ⋯⟅∷⟆ R↓ ⟨∷⟩ toTerm (EncodeEnv.numAtoms env) ⟨∷⟩ body ⟨∷⟩ `refl ⟨∷⟩ List.map vArg atoms)
-      where
-      R↓ = EncodeEnv.R↓ env
-      `refl = def (reflName side) (2 ⋯⟅∷⟆ R↓ ⟨∷⟩ 1 ⋯⟅∷⟆ [])
 
 ------------------------------------------------------------------------
 -- The macro.
