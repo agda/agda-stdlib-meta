@@ -347,3 +347,17 @@ module PerfCanaries where
     shuffle : (q₁ + (q₂ + (q₃ + (q₄ + (q₅ + (q₆ + (q₇ + q₈)))))))
             ≡ (q₈ + (q₇ + (q₆ + (q₅ + (q₄ + (q₃ + (q₂ + q₁)))))))
     shuffle = solve-≈ ℚP.+-*-commutativeRing
+
+------------------------------------------------------------------------
+-- 24. Identities recognised by constants: Bool's ∨-∧ semiring has 0#
+-- = `false` and 1# = `true`, which can only be parsed as constants
+
+module ConstructorIdentities where
+  open import Data.Bool            using (Bool; false; true; _∨_; _∧_)
+  open import Data.Bool.Properties using (∨-∧-commutativeSemiring)
+
+  units : ∀ x y → (x ∨ false) ∧ (true ∧ y) ≡ x ∧ y
+  units x y = solve-≈ ∨-∧-commutativeSemiring
+
+  annihilate : ∀ x y → (x ∧ false) ∨ y ≡ y ∨ false
+  annihilate x y = solve-≈ ∨-∧-commutativeSemiring
