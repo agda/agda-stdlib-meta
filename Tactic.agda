@@ -25,3 +25,6 @@ open import Tactic.Derive.Convertible public
 
 open import Tactic.Solver.Ring
 open import Tactic.Solver.Ring.Tests
+open import Tactic.Solver.Monoid
+open import Tactic.Solver.Monoid.Tests
+open import Tactic.Solver.Core.Indexing.Tests
