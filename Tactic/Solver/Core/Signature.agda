@@ -238,6 +238,16 @@ record DetectedTheory : Set where
     -- Sort key of an atom, for multi-sorted theories; atoms whose
     -- keys are α-equal share a binder group. `nothing` = one group.
     sortOf       : Maybe (Term → TC Term)
+    -- How an atom reaches the emitted call. `nothing` = binder mode:
+    -- atoms are collected in the store, encoded as references to the
+    -- `λ x₁ … xₙ` binders, and their spellings passed to
+    -- `finishSolve`. `just emb` = embed mode, for backends whose
+    -- expression type is indexed by the carrier itself (an
+    -- intrinsically-typed `Expr : Obj → Obj → Set` with a leaf
+    -- constructor for morphisms): the subterm is spliced in place,
+    -- `emb env t`. Embed mode bypasses the store entirely — no
+    -- binders, `numAtoms ≡ 0`, `finishSolve` receives no atoms.
+    embedAtom    : Maybe (EncodeEnv → Term → Term)
     encodeEq     : EncodeEnv → Term → Term → Term
     finishSolve  : EncodeEnv → (lambdaBody : Term) (atoms : List Term) → Term
 
