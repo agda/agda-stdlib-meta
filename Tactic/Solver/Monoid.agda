@@ -125,6 +125,7 @@ private
       ; literalSpec  = nothing
       ; blockedNames = blockedOf slotted
       ; sortOf       = nothing
+      ; embedAtom    = nothing
       ; encodeEq     = λ env x y → defP env (eqName side) (x ∷ y ∷ [])
       ; finishSolve  = finishViaSolve (solveName side) (reflName side)
       })
