@@ -12,6 +12,10 @@ t `≡ t' = quote _≡_ ∙⟦ t ∣ t' ⟧
 
 pattern _``≡_ t t' = def (quote _≡_) (_ ∷ _ ∷ vArg t ∷ vArg t' ∷ [])
 
+infixr 4 _`,_
+_`,_ : Term → Term → Term
+t `, t' = quote _,_ ◆⟦ t ∣ t' ⟧
+
 `refl : Term
 `refl = quote refl ◆
 

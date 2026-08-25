@@ -17,6 +17,8 @@
 --     while the goal is analysed;
 --   * `sortOf`: how to compute an atom's sort key, for multi-sorted
 --     theories (`nothing` = single-sorted: one atom group);
+--   * `atomEmission`: how atoms reach the emitted call — a binder
+--     reference, a store-indexed reference, or spliced in place;
 --   * `encodeEq`/`finishSolve`: the equation node and the final
 --     solver call.
 --
@@ -224,7 +226,27 @@ record LiteralSpec : Set where
     encodeSucPeel  : EncodeEnv → Term → Term
 
 ------------------------------------------------------------------------
--- IV. Everything `detect` learned about the user's bundle.
+-- IV. How an atom reaches the emitted call.
+--
+-- `binder` and `indexed` collect atoms in the store: occurrences are
+-- deduplicated, the reference is minted from the atom's
+-- (group , slot) position — stable, since groups appear in
+-- first-discovery order and grow by appending — and the spellings
+-- reach `finishSolve`. `embed` bypasses the store.
+
+data AtomEmission : Set where
+  -- a de Bruijn reference into the emitted call's `λ x₁ … xₙ` prefix
+  -- (`Indexing.atomVar`)
+  binder  : AtomEmission
+  -- a theory-supplied reference — e.g. `gen i` with a `Fin` literal
+  -- pointing into a signature vector
+  indexed : (EncodeEnv → (group slot : ℕ) → Term) → AtomEmission
+  -- the subterm spliced in place, for backends whose expression type
+  -- is indexed by the carrier itself
+  embed   : (EncodeEnv → Term → Term) → AtomEmission
+
+------------------------------------------------------------------------
+-- V. Everything `detect` learned about the user's bundle.
 
 record DetectedTheory : Set where
   field
@@ -238,16 +260,8 @@ record DetectedTheory : Set where
     -- Sort key of an atom, for multi-sorted theories; atoms whose
     -- keys are α-equal share a binder group. `nothing` = one group.
     sortOf       : Maybe (Term → TC Term)
-    -- How an atom reaches the emitted call. `nothing` = binder mode:
-    -- atoms are collected in the store, encoded as references to the
-    -- `λ x₁ … xₙ` binders, and their spellings passed to
-    -- `finishSolve`. `just emb` = embed mode, for backends whose
-    -- expression type is indexed by the carrier itself (an
-    -- intrinsically-typed `Expr : Obj → Obj → Set` with a leaf
-    -- constructor for morphisms): the subterm is spliced in place,
-    -- `emb env t`. Embed mode bypasses the store entirely — no
-    -- binders, `numAtoms ≡ 0`, `finishSolve` receives no atoms.
-    embedAtom    : Maybe (EncodeEnv → Term → Term)
+    -- How an atom reaches the emitted call; see `AtomEmission`.
+    atomEmission : AtomEmission
     encodeEq     : EncodeEnv → Term → Term → Term
     finishSolve  : EncodeEnv → (lambdaBody : Term) (atoms : List Term) → Term
 

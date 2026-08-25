@@ -148,11 +148,13 @@ parseGoalTerm det = parse fuel
   -- subterm exactly as the user wrote it — the only form that may
   -- appear in the emitted call; `whnf` is whatever reduced form the
   -- caller already has, used only as the store's second identity key
-  -- (never emitted). In binder mode returns the encoding referencing
-  -- the atom's solver binder; in embed mode (`embedAtom`) splices
-  -- `orig` directly and leaves the store untouched.
-  atomiseBinder : (orig whnf : Term) → SortedAtomStore → TC (Encoding × SortedAtomStore)
-  atomiseBinder orig whnf acc = do
+  -- (never emitted). The store-backed modes (`binder`, `indexed`)
+  -- differ only in the reference builder applied to the atom's
+  -- (group , slot) position; `embed` splices `orig` directly and
+  -- leaves the store untouched.
+  atomiseStore : (ref : EncodeEnv → (g s : ℕ) → Term)
+               → (orig whnf : Term) → SortedAtomStore → TC (Encoding × SortedAtomStore)
+  atomiseStore ref orig whnf acc = do
     key ← sortKeyOf orig
     let acc' = insertSortedStore key (orig , whnf) acc
     -- see `Reflection.Utils.AtomStore` for why we do this
@@ -162,12 +164,13 @@ parseGoalTerm det = parse fuel
                     ∷ termErr orig
                     ∷ strErr " not found after insertion."
                     ∷ [])
-    pure ((λ env → atomVar env g s) , acc')
+    pure ((λ env → ref env g s) , acc')
 
   atomise : (orig whnf : Term) → SortedAtomStore → TC (Encoding × SortedAtomStore)
-  atomise orig whnf acc = case embedAtom of λ where
-    (just emb) → pure ((λ env → emb env orig) , acc)
-    nothing    → atomiseBinder orig whnf acc
+  atomise orig whnf acc = case atomEmission of λ where
+    binder        → atomiseStore atomVar orig whnf acc
+    (indexed ref) → atomiseStore ref orig whnf acc
+    (embed emb)   → pure ((λ env → emb env orig) , acc)
 
   findConstant : Term → List Constant → Maybe (EncodeEnv → Term)
   findConstant t []       = nothing

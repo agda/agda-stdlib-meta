@@ -203,7 +203,7 @@ private
       ; blockedNames = blockedOf slotted
       ; constants    = constantsOf slotted
       ; sortOf       = nothing
-      ; embedAtom    = nothing
+      ; atomEmission = binder
       ; encodeEq     = λ env x y → defP env (eqName side) (x ∷ y ∷ [])
       ; finishSolve  = finishViaSolve (solveName side) (reflName side)
       })

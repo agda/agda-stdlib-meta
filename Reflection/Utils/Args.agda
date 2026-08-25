@@ -19,6 +19,9 @@ takeFirst zero    _        = just []
 takeFirst (suc _) []       = nothing
 takeFirst (suc n) (x ∷ xs) = Maybe.map (x ∷_) (takeFirst n xs)
 
+takeLast : ∀ {ℓ} {A : Set ℓ} (n : ℕ) → List A → Maybe (Vec A n)
+takeLast n = Maybe.map Vec.reverse ∘ takeFirst n ∘ reverse
+
 getVisibility : Arg A → Visibility
 getVisibility (arg (arg-info v _) _) = v
 
@@ -40,6 +43,12 @@ vArgs = λ where
   []            → []
   (vArg x ∷ xs) → x ∷ vArgs xs
   (_      ∷ xs) → vArgs xs
+
+hArgs : Args A → List A
+hArgs = λ where
+  []            → []
+  (hArg x ∷ xs) → x ∷ hArgs xs
+  (_      ∷ xs) → hArgs xs
 
 visibleCount : Args A → ℕ
 visibleCount = length ∘ vArgs
