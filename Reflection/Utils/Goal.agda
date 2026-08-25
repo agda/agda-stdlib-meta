@@ -9,10 +9,10 @@ open import Meta.Prelude
 
 open import Reflection
 open import Reflection.AST.Argument
-open import Reflection.Utils.Args using (getVisibleArgs)
-open import Reflection.Utils.Metas using (isMeta; findMetaIds; firstMeta; shareMeta)
+open import Reflection.Utils.Args
+open import Reflection.Utils.Metas
 import Data.Vec as Vec
-open import Data.List using (null)
+import Data.List
 
 -- Run a continuation under the goal type's pi-prefix (weak-head
 -- reducing each layer, never normalising). The continuation gets the
@@ -51,25 +51,10 @@ requireEquationSides t = case equationSides t of λ where
     ∷ termErr t
     ∷ [])
 
--- Metavariable policy for solver-style macros: if one side has metas
--- not shared with the other, only this macro could solve them, so
--- blocking would retry forever — error instead. Otherwise block on
--- the first meta and retry once elaboration has resolved it.
-blockOnEquationMetas : String → (equation lhs rhs : Term) → TC ⊤
-blockOnEquationMetas macroName equation lhs rhs = do
-  let bothStructured = not (isMeta lhs) ∧ not (isMeta rhs)
-  let metasL         = findMetaIds lhs
-  let metasR         = findMetaIds rhs
-  let anyMetas       = not (null metasL ∧ null metasR)
-  let sharedMeta     = shareMeta metasL metasR
-  if bothStructured ∧ anyMetas ∧ not sharedMeta
-    then typeError
-      ( strErr macroName
-      ∷ strErr ": the goal `LHS ≈ RHS` has at least one side "
-      ∷ strErr "containing a metavariable that could not be resolved. To run this "
-      ∷ strErr "solver you must add type annotations to resolve these variables."
-      ∷ [])
-    else pure tt
-  case firstMeta equation of λ where
-    (just m) → blockOnMeta m
-    nothing  → pure tt
+-- Collect every meta anywhere in the goal equation and block on all
+-- of them, retrying once elaboration has resolved the lot.
+blockOnEquationMetas : Term → TC ⊤
+blockOnEquationMetas equation =
+  case findMetaIds equation of λ where
+    []         → pure tt
+    ms@(_ ∷ _) → blockTC (blockerAll (Data.List.map blockerMeta ms))

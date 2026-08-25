@@ -206,6 +206,22 @@ module UnderTrans where
   test : ∀ a b → (a + b) * a ≡ a * a + b * a
   test a b = trans (*-comm (a + b) a) (solve-≈ +-*-commutativeSemiring)
 
+-- Regression: these once failed
+
+module UnderTransBlockedMetas {c ℓ} (R : CommutativeSemiring c ℓ) where
+  open CommutativeSemiring R
+
+  middle-of-trans : ∀ x y z → (x + y) + z ≈ y + (x + z)
+  middle-of-trans x y z =
+    trans (+-assoc x y z) (trans (solve-≈ R) (+-congˡ (+-comm z x)))
+
+  middle-of-trans-* : ∀ x y z → (x + y) * z ≈ z * y + z * x
+  middle-of-trans-* x y z = trans (solve-≈ R) (+-congˡ (*-comm x z))
+
+  mirror : ∀ x y z → (x + y) + z ≈ y + (x + z)
+  mirror x y z =
+    trans (+-assoc x y z) (trans (sym (solve-≈ R)) (+-congˡ (+-comm z x)))
+
 ------------------------------------------------------------------------
 -- 16. Negative ℤ literals (`-[1+_]`/`-1ℤ`), recognised on the CR side
 -- and encoded as negative ℤ coefficients.
