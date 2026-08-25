@@ -226,7 +226,7 @@ private
   solveEquation : String → DetectedTheory → Term → ℕ → Term → TC Term
   solveEquation macroName det `R numPiVars equation = do
     lhs , rhs ← requireEquationSides equation
-    blockOnEquationMetas macroName equation lhs rhs
+    blockOnEquationMetas equation
 
     -- Constant patterns were resolved outside the pi-prefix; bring
     -- them to the equation's context.
