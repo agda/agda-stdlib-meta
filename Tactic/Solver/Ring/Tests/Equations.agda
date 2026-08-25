@@ -13,10 +13,14 @@ open import Tactic.Solver.Ring using (solve-≈)
 -- `solve-≈` is not going to help solving any metavariables. When it
 -- is applied in any context where at least one side of the goal
 -- contains an unresolved metavariable that only this solve call can
--- determine, the macro emits a friendly type error. Note: this might
--- be fixable, by making the solver aware of metas & letting it solve
--- them. This seems very tricky and not worth it - just add a type
--- annotation.
+-- determine, the macro gives up, leaving the unresolved constraints
+-- visible to the user. Sadly, we cannot give a nice error message
+-- since `blockTC` (which is the only way to correctly detect this
+-- scenario) doesn't give us any agency if the macro is never
+-- resumed. However, you'll always see the exact point where Agda got
+-- stuck in its output. Note: this might be fixable, by making the
+-- solver aware of metas & letting it solve them. This seems very
+-- tricky and not worth it - just add a type annotation.
 ------------------------------------------------------------------------
 
 module ReadableErrorMessages {c ℓ} (R : CommutativeSemiring c ℓ) where
