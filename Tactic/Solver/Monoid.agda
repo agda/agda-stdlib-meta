@@ -157,10 +157,7 @@ private
 
 solve-∙-macro : Term → Term → TC ⊤
 solve-∙-macro M hole = do
-  -- `commitTC` locks in `detectSide`'s metavariable resolutions, as
-  -- in the ring solver.
   side , M' ← detectSide M
-  commitTC
   solveByTheory (monoidTheory side) M' hole
 
 macro
