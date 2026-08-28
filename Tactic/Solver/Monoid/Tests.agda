@@ -13,6 +13,8 @@ open import Data.List
 open import Data.List.Properties
 open import Data.Nat
 open import Data.Nat.Properties
+open import Data.Product
+open import Data.Unit
 open import Level using (Level)
 open import Relation.Binary.PropositionalEquality
 
@@ -91,11 +93,25 @@ hidden-binders : ∀ {x : ℕ} (y : ℕ) {z : ℕ} → (x + y) + z ≡ x + (y + 
 hidden-binders = solve-∙ +-0-monoid
 
 ------------------------------------------------------------------------
--- Regression test: A solver call whose expected type is still a
--- metavariable when the macro first runs.
+-- Regression tests
 
 module _ (M : Monoid c ℓ) where
   open Monoid M
 
+  -- A solver call whose expected type is still a metavariable when
+  -- the macro first runs.
+
   blocked-goal : (x : Carrier) → ℕ
   blocked-goal x = length (solve-∙ M ∷ identityˡ x ∷ [])
+
+  -- Two blocked solver calls that must fail fast rather than wake
+  -- each other forever.
+
+  -- P : Set (c Level.⊔ ℓ)
+  -- P = Σ[ y ∈ Carrier ] (∀ x → (x ∙ ε) ≈ y)
+
+  -- g : P → ⊤
+  -- g _ = tt
+
+  -- cascade : ⊤ × ⊤
+  -- cascade = g (_ , solve-∙ M) , g (_ , solve-∙ M)

@@ -236,6 +236,12 @@ private
   solveEquation macroName det `R numPiVars equation = do
     lhs , rhs ← requireEquationSides equation
     blockOnEquationMetas equation
+    -- Commit now, after every blocking point: a caller-side commit
+    -- before the blocks leaves each blocked run's fresh metas in the
+    -- global state, and solving one wakes every other blocked solver
+    -- call in the declaration — two or more such sites then re-run
+    -- each other in an endless cascade.
+    commitTC
 
     -- Constant patterns were resolved outside the pi-prefix; bring
     -- them to the equation's context.
