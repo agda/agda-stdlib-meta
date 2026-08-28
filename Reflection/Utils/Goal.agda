@@ -32,6 +32,7 @@ underPis = go 0
           nothing  → pure tt
         body ← extendContext s a (go (suc n) fuel b k)
         pure (lam av (abs s body))
+      (meta m _) → blockOnMeta m
       t → k n t
 
 -- The last two visible arguments of a relation application.

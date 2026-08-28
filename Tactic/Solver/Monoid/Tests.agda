@@ -89,3 +89,13 @@ list-++-assoc {A = A} = solve-∙ (++-monoid A)
 
 hidden-binders : ∀ {x : ℕ} (y : ℕ) {z : ℕ} → (x + y) + z ≡ x + (y + z)
 hidden-binders = solve-∙ +-0-monoid
+
+------------------------------------------------------------------------
+-- Regression test: A solver call whose expected type is still a
+-- metavariable when the macro first runs.
+
+module _ (M : Monoid c ℓ) where
+  open Monoid M
+
+  blocked-goal : (x : Carrier) → ℕ
+  blocked-goal x = length (solve-∙ M ∷ identityˡ x ∷ [])
