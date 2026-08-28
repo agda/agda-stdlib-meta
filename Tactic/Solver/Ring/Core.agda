@@ -247,11 +247,8 @@ private
 
 solve-≈-macro : Term → Term → TC ⊤
 solve-≈-macro R hole = do
-  -- `commitTC` locks in `detectSide`'s metavariable resolutions
-  -- before further work that depends on `R`'s type being settled.
   -- `solveByTheory` deliberately doesn't redo the `checkType`.
   side , R' ← detectSide R
-  commitTC
   solveByTheory (ringTheory side) R' hole
 
 macro
