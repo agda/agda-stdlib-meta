@@ -260,9 +260,31 @@ private
     let f          = prependVLams (replicate (EncodeEnv.numAtoms env) "x") lambdaBody
     pure (finishSolve env f atoms)
 
+-- The macro shell shared by solver frontends: infer the hole's type,
+-- walk its pi-prefix with the given names kept opaque, hand each
+-- equation to `solveEq` — which receives the number of pi-binders
+-- walked and the equation type — and unify.
+--
+-- Callers must not `commitTC` before this: `underPis` (and typically
+-- `solveEq`) can block, and a blocked run's committed metas wake every
+-- other blocked solver call in the declaration — two or more such
+-- sites then re-run each other in an endless cascade. Commit inside
+-- `solveEq` after its own blocking points instead.
+solveWith : List Name → (ℕ → Type → TC Term) → Term → TC ⊤
+solveWith blockedNames solveEq hole = do
+  holeTy ← inferType hole
+  -- Only the goal *analysis* runs with the theory's names blocked
+  final ← withReduceDefs (false , blockedNames) (underPis fuel holeTy solveEq)
+  unify hole final
+
 -- Precondition: `R` has been type-checked against the structure's
 -- bundle type by the caller (e.g. via
 -- `Tactic.Solver.Ring.Core.detectSide`).
+--
+-- `solveWith`'s body is inlined here rather than called: the extra
+-- indirection through the reflection interpreter costs measurable
+-- time per macro call on call-heavy modules (~5% on the ring
+-- Equations suite).
 solveByTheory : Theory → Term → Term → TC ⊤
 solveByTheory thy `R hole = do
   let open Theory thy
