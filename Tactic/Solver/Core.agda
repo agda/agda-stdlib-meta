@@ -23,6 +23,9 @@
 --     conventions of the emitted proof term (unit-tested, pure);
 --   * `Tactic.Solver.Core.Frontend`  — goal analysis, parsing, and
 --     the `solveByTheory` driver;
+--   * `Tactic.Solver.Core.TwoLevelFrontend` — the driver for
+--     two-level theories: leaves indexed by a second theory's terms,
+--     atoms with theory-typed types synthesising a signature;
 --   * `Tactic.Solver.Core.StdlibBackend` — call-shape helpers for
 --     stdlib `Relation.Binary.Reflection`-style backends.
 
@@ -30,6 +33,7 @@
 
 module Tactic.Solver.Core where
 
-open import Tactic.Solver.Core.Indexing  public
-open import Tactic.Solver.Core.Signature public
-open import Tactic.Solver.Core.Frontend  public
+open import Tactic.Solver.Core.Indexing      public
+open import Tactic.Solver.Core.Signature     public
+open import Tactic.Solver.Core.Frontend      public
+open import Tactic.Solver.Core.TwoLevelFrontend public
