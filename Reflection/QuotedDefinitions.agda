@@ -16,6 +16,10 @@ infixr 4 _`,_
 _`,_ : Term → Term → Term
 t `, t' = quote _,_ ◆⟦ t ∣ t' ⟧
 
+`vec : List Term → Term
+`vec = foldr _`∷_ `[]
+  where open import Data.Vec.Reflection using (`[]; _`∷_)
+
 `refl : Term
 `refl = quote refl ◆
 
