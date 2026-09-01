@@ -9,6 +9,8 @@ open import Meta.Prelude
 
 open import Reflection
 open import Reflection.AST.Argument
+open import Reflection.AST.Name
+open import Data.Bool
 open import Reflection.Utils.Args
 open import Reflection.Utils.Metas
 import Data.Vec as Vec
@@ -18,13 +20,18 @@ import Data.List
 -- reducing each layer, never normalising). The continuation gets the
 -- number of binders entered and the type beneath them; its result is
 -- wrapped in lambdas of matching visibility. The ℕ is fuel.
-underPis : ℕ → Type → (ℕ → Type → TC Term) → TC Term
-underPis = go 0
+underPisOpaque : List Name → ℕ → Type → (ℕ → Type → TC Term) → TC Term
+underPisOpaque opaqueNames = go 0
   where
+  stuck : Term → Bool
+  stuck (pi _ _)  = true
+  stuck (def f _) = any (f ≡ᵇ_) opaqueNames
+  stuck _         = false
+
   go : ℕ → ℕ → Type → (ℕ → Type → TC Term) → TC Term
   go n 0       ty k = k n ty
   go n (suc fuel) ty k = do
-    ty' ← reduce ty
+    ty' ← if stuck ty then pure ty else reduce ty
     case ty' of λ where
       (pi a@(arg (arg-info av _) dom) (abs s b)) → do
         case firstMeta dom of λ where
@@ -34,6 +41,9 @@ underPis = go 0
         pure (lam av (abs s body))
       (meta m _) → blockOnMeta m
       t → k n t
+
+underPis : ℕ → Type → (ℕ → Type → TC Term) → TC Term
+underPis = underPisOpaque []
 
 -- The last two visible arguments of a relation application.
 equationSides : Term → Maybe (Term × Term)
