@@ -13,7 +13,8 @@ open import Data.Bool public
   hiding (_≟_; _≤_; _≤?_; _<_; _<?_)
 open import Data.Empty public
 open import Data.List public
-  hiding (align; alignWith; fromMaybe; map; zip; zipWith)
+  hiding (align; alignWith; any; fromMaybe; map; zip; zipWith)
+open import Data.Bool.ListAction public using (any)
 open import Data.Maybe public
   hiding (_>>=_; ap; align; alignWith; fromMaybe; map; zip; zipWith)
 open import Data.Unit public

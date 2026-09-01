@@ -209,22 +209,27 @@ module _ (theory : TwoLevelTheory) where
 
     parseGoal det zero    t st = atomiseT t st
     parseGoal det (suc k) t st = do
-      t' ← whnfIfReducible t
-      case t' of λ where
-        (def nm xs) → case findTwoLevelOperator operators nm of λ where
-          nothing  → atomiseT t st
-          (just o) → do
-            mocc ← TwoLevelOperator.parseOcc o xs
-            case mocc of λ where
-              nothing    → atomiseT t st
-              (just occ) → do
-                ies , ixs' ← parseIxMany det (TwoLevelOccurrence.indices occ) (proj₁ st)
-                oes , st'' ← parseGoalMany det k (TwoLevelOccurrence.operands occ)
-                               (ixs' , proj₂ st)
-                pure ( (λ env → TwoLevelOccurrence.encode occ env
-                                  (applyEnv env ies) (applyEnv env oes))
-                     , st'')
-        _ → atomiseT t st
+      -- For performance reasons, try the happy path first
+      nothing ← tryOperators t
+        where (just occ) → recurse occ
+      nothing ← whnfIfReducible t >>= tryOperators
+        where (just occ) → recurse occ
+      atomiseT t st
+      where
+      tryOperators : Term → TC (Maybe TwoLevelOccurrence)
+      tryOperators (def nm xs) = case findTwoLevelOperator operators nm of λ where
+        nothing  → pure nothing
+        (just o) → TwoLevelOperator.parseOcc o xs
+      tryOperators _ = pure nothing
+
+      recurse : TwoLevelOccurrence → TC (Encoding × Stores)
+      recurse occ = do
+        ies , ixs' ← parseIxMany det (TwoLevelOccurrence.indices occ) (proj₁ st)
+        oes , st'' ← parseGoalMany det k (TwoLevelOccurrence.operands occ)
+                       (ixs' , proj₂ st)
+        pure ( (λ env → TwoLevelOccurrence.encode occ env
+                          (applyEnv env ies) (applyEnv env oes))
+             , st'')
 
     parseGoalMany det k []       st = pure ([] , st)
     parseGoalMany det k (t ∷ ts) st = do

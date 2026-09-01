@@ -274,7 +274,7 @@ solveWith : List Name → (ℕ → Type → TC Term) → Term → TC ⊤
 solveWith blockedNames solveEq hole = do
   holeTy ← inferType hole
   -- Only the goal *analysis* runs with the theory's names blocked
-  final ← withReduceDefs (false , blockedNames) (underPis fuel holeTy solveEq)
+  final ← withReduceDefs (false , blockedNames) (underPisOpaque blockedNames fuel holeTy solveEq)
   unify hole final
 
 -- Precondition: `R` has been type-checked against the structure's
@@ -292,5 +292,5 @@ solveByTheory thy `R hole = do
   holeTy ← inferType hole
   -- Only the goal *analysis* runs with the theory's names blocked
   final ← withReduceDefs (false , DetectedTheory.blockedNames det)
-            (underPis fuel holeTy (solveEquation macroName det `R))
+            (underPisOpaque (DetectedTheory.blockedNames det) fuel holeTy (solveEquation macroName det `R))
   unify hole final
