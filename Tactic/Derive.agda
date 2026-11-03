@@ -36,6 +36,7 @@ open import Tactic.ClauseBuilder
 open import Class.DecEq
 open import Class.Functor
 open import Class.Monad
+open import Class.MonadReader
 open import Class.MonadReader.Instances
 open import Class.MonadTC.Instances
 open import Class.Show
@@ -43,7 +44,7 @@ open import Class.Traversable
 
 instance
   _ = ContextMonad-MonadTC
-  _ = Functor-M {M = TC}
+  _ = Functor-ReaderT
   _ = Show-List
   _ = DecEq-×
 

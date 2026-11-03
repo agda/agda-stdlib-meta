@@ -16,13 +16,14 @@ open import Tactic.ClauseBuilder
 
 open import Class.Functor
 open import Class.MonadTC
+open import Class.MonadReader
 
 open MonadTC ⦃...⦄
 
 instance
   _ = MonadTC-TCI
   _ = ContextMonad-MonadTC
-  _ = Functor-M
+  _ = Functor-ReaderT
 
 open ClauseExprM
 

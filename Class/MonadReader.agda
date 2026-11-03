@@ -12,7 +12,7 @@ open import Class.MonadError
 
 open MonadError ⦃...⦄
 
-record MonadReader (R : Set ℓ) (M : Type↑) ⦃ _ : Monad M ⦄ : Setω where
+record MonadReader (R : Set ℓ) (M : Type↑ ℓ↑) ⦃ _ : Monad M ⦄ : Setω where
   field
     ask : M R
     local : ∀ {a} {A : Set a} → (R → R) → M A → M A
