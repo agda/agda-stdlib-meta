@@ -22,8 +22,6 @@ open import Class.MonadReader.Instances
 open import Class.MonadTC.Instances
 open import Class.Traversable
 
-instance _ = Functor-M ⦃ Class.Monad.Monad-TC ⦄
-
 applyConstrToUnknowns : Name → Type → Term
 applyConstrToUnknowns n ty = con n (map toUnknown $ argTys ty)
   where

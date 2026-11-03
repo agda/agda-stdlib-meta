@@ -21,12 +21,12 @@ Convertible₁ T U = ∀ {A B} → ⦃ Convertible A B ⦄ → Convertible (T A)
 Convertible₂ : (Set → Set → Set) → (Set → Set → Set) → Set₁
 Convertible₂ T U = ∀ {A B} → ⦃ Convertible A B ⦄ → Convertible₁ (T A) (U B)
 
-Functor⇒Convertible : ∀ {F : Type↑} → ⦃ Functor F ⦄ → Convertible₁ F F
+Functor⇒Convertible : ∀ {F : ∀ {ℓ} → Set ℓ → Set ℓ} → ⦃ Functor F ⦄ → Convertible₁ F F
 Functor⇒Convertible = λ where
   .to   → fmap to
   .from → fmap from
 
-Bifunctor⇒Convertible : ∀ {F} → ⦃ Bifunctor F ⦄ → Convertible₂ F F
+Bifunctor⇒Convertible : ∀ {F : ∀ {ℓ ℓ'} → Set ℓ → Set ℓ' → Set (ℓ ⊔ˡ ℓ')} → ⦃ Bifunctor F ⦄ → Convertible₂ F F
 Bifunctor⇒Convertible = λ where
   .to   → bimap to to
   .from → bimap from from
