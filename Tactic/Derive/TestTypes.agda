@@ -71,6 +71,13 @@ data N₂ where
   n₂  : N₂
   n₁→₂ : N₁ → N₂
 
+-- Two constructors with the same wrapper chain (`List N₃`).
+-- This exercises the deduplication of wrapper chains: the chain is found
+-- once per constructor, so deriving compares two equal entries.
+data N₃ : Set where
+  n₃ˡ : List N₃ → N₃
+  n₃ʳ : List N₃ → N₃
+
 AllTestTypes : List Name
 AllTestTypes = quote E0 ∷ quote E1 ∷ quote E2 ∷ quote E3 ∷ quote R1 ∷ quote R2 ∷ quote M₁ ∷ quote M₂ ∷ quote E5 ∷ []
 
