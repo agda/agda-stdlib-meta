@@ -153,4 +153,6 @@ private
 
   unquoteDecl DecEq-N₁ DecEq-N₂ = derive-DecEq $ (quote N₁ , DecEq-N₁) ∷ (quote N₂ , DecEq-N₂) ∷ []
 
+  unquoteDecl DecEq-N₃ = derive-DecEq [ (quote N₃ , DecEq-N₃) ]
+
   -- Expected: DecEq-Term DecEq-Product
