@@ -32,7 +32,7 @@ open import Reflection.QuotedDefinitions
 open import Reflection.Utils
 open import Reflection.Utils.Debug
 open Debug ("DecEqFast" , 100)
-open import Reflection hiding (_>>=_; _>>_; _≟_)
+open import Reflection hiding (_>>=_; _>>_)
 open import Reflection.Utils.TCM
 
 --

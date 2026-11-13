@@ -202,8 +202,7 @@ module _ (arity : ℕ) (genCe : (Term → Maybe Name) → List SinglePattern →
   deriveGroup seeds = do
     -- discover all wrapper-chain helpers needed by any seed's constructors,
     -- e.g. ([List,Arg],Term) when Term has a `List (Arg Term)` field
-    helpers ← genMutualHelpers $ L.map proj₁ seeds
-    -- generate fresh, human-readable names for the helpers
+    helpers ← runAndReset $ genMutualHelpers $ L.map proj₁ seeds
     helperNames ← traverse ⦃ Functor-List ⦄ mkHelperName helpers
     let helperTable : List TransEntry
         helperTable = L.zip helpers helperNames
@@ -215,9 +214,10 @@ module _ (arity : ℕ) (genCe : (Term → Maybe Name) → List SinglePattern →
 
         -- all derivations share a single table so every mutual peer and helper is in scope
         open D (seedTable ++ helperTable)
-    baseResults ← traverse deriveBase seeds
-    helperResults ← traverse deriveHelper helperTable
-    return (baseResults ++ helperResults)
+    runAndReset do
+      baseResults ← traverse deriveBase seeds
+      helperResults ← traverse deriveHelper helperTable
+      return (baseResults ++ helperResults)
     where
       mkHelperName : WrapperChain × Name → TC Name
       mkHelperName (chain , tgt) = freshName
@@ -234,4 +234,4 @@ module _ (arity : ℕ) (genCe : (Term → Maybe Name) → List SinglePattern →
 
   derive-Class : ⦃ TCOptions ⦄ → List (Name × Name) → UnquoteDecl
   derive-Class l = initUnquoteWithGoal (className ∙) $
-    declareAndDefineFuns =<< runAndReset (deriveGroup l)
+    declareAndDefineFuns =<< deriveGroup l

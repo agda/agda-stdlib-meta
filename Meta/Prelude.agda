@@ -10,20 +10,20 @@ variable
   A B C D : Set ℓ
 
 open import Data.Bool public
-  hiding (_≟_; _≤_; _≤?_; _<_; _<?_)
+  hiding (_≟_; _≡?_; _≤_; _≤?_; _<_; _<?_)
 open import Data.Empty public
 open import Data.List public
   hiding (align; alignWith; fromMaybe; map; zip; zipWith)
 open import Data.Maybe public
   hiding (_>>=_; ap; align; alignWith; fromMaybe; map; zip; zipWith)
 open import Data.Unit public
-  hiding (_≟_)
+  hiding (_≡?_)
 open import Data.Sum public
   hiding (assocʳ; assocˡ; map; map₁; map₂; reduce; swap)
 open import Data.Product public
   hiding (assocʳ; assocˡ; map; map₁; map₂; swap; zip; zipWith; _<*>_)
 open import Data.Nat public
-  hiding (_≟_; _≤_; _≤?_; _<_; _<?_; _≤ᵇ_; _≡ᵇ_)
+  hiding (_≟_; _≡?_; _≤_; _≤?_; _<_; _<?_; _≤ᵇ_; _≡ᵇ_)
 open import Data.String public
   using (String; _<+>_)
 

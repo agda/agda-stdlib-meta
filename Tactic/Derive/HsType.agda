@@ -6,7 +6,7 @@ open import Meta.Prelude hiding (lookup)
 
 open import Agda.Builtin.Reflection using
   (declareData; defineData; pragmaForeign; pragmaCompile; solveInstanceConstraints)
-open import Reflection as R hiding (showName; _>>=_; _>>_; _≟_)
+open import Reflection as R hiding (showName; _>>=_; _>>_)
 open import Reflection.AST.DeBruijn
 
 open import Data.Maybe using (fromMaybe; maybe′; _<∣>_)

@@ -17,7 +17,7 @@ open import Algebra.Solver.Ring.AlmostCommutativeRing
   using (AlmostCommutativeRing; fromCommutativeRing ; _-Raw-AlmostCommutative⟶_)
 open import Data.Integer.Base as ℤ using (ℤ; +_; -[1+_]; _⊖_; _◃_)
 open import Data.Integer.Properties as ℤP
-  using ([1+m]⊖[1+n]≡m⊖n; +◃n≡+n; _≟_)
+  using ([1+m]⊖[1+n]≡m⊖n; +◃n≡+n; _≡?_)
 open import Data.Maybe.Base using (Maybe; nothing; just)
 open import Data.Nat.Base as ℕ using (ℕ; zero; suc)
 import Data.Nat.Properties as ℕP
@@ -200,7 +200,7 @@ morphism = record
 -- `1# * a ≈ a` fails. ℤ equality is decidable, so we can always
 -- return `just` on equal coefficients.
 dec : ∀ m n → Maybe (m ×ᶻ 1# ≈ n ×ᶻ 1#)
-dec m n = case m ≟ n of λ where
+dec m n = case m ≡? n of λ where
   (yes m≡n) → just (reflexive (≡.cong (_×ᶻ 1#) m≡n))
   (no  _)   → nothing
 

@@ -8,7 +8,7 @@ open import Data.List.Membership.DecPropositional using (_∈?_)
 open import Data.Product using (map₂)
 open import Relation.Nullary.Decidable using (⌊_⌋)
 
-open import Reflection hiding (_>>=_; _>>_; _≟_)
+open import Reflection hiding (_>>=_; _>>_)
 open import Reflection.QuotedDefinitions
 open import Reflection.Syntax
 open import Reflection.Tactic
