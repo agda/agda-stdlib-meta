@@ -11,7 +11,7 @@
 --   * parses each goal side at the goal level: operator occurrences
 --     recurse on their operands, their `indices` are parsed by the
 --     index theory into a shared `SortedAtomStore`, and unrecognised
---     subterms become typed atoms in an α-keyed store;
+--     subterms become typed atoms in a dual-key `AtomStore`;
 --   * synthesises the signature: each atom's type is inferred and
 --     weak-head reduced, `matchType` extracts its index terms, those
 --     are parsed by the index theory, and `encodeSig` builds one
@@ -176,19 +176,26 @@ module _ (theory : TwoLevelTheory) where
   private
     -- (index-theory atoms , typed atoms)
     Stores : Set
-    Stores = SortedAtomStore × List Term
+    Stores = SortedAtomStore × AtomStore
 
     applyEnv : EncodeEnv → List Encoding → List Term
     applyEnv env = List.map (λ e → e env)
 
-    -- Every unrecognised subterm is a typed atom, kept in the α-keyed
-    -- store with its original spelling.
+    -- Every unrecognised subterm is a typed atom, kept with its
+    -- original spelling and, as a second identity key, its weak-head
+    -- normal form: one value can reach the goal under two spellings —
+    -- a definition's stored body keeps an alias that the same alias
+    -- written in a type signature has already been elaborated away —
+    -- and an α-key alone would then make them two generators, which no
+    -- backend can relate.
     atomiseT : Term → Stores → TC (Encoding × Stores)
     atomiseT orig (ixs , atoms) = do
-      let atoms' = insertAtom orig atoms
+      key ← whnfIfReducible orig
+      let atom   = (orig , key)
+          atoms' = insertAtomStore atom atoms
       -- see `Reflection.Utils.AtomStore` for why insert and index
       -- stay separate traversals
-      just i ← pure (findAtomIndex orig atoms')
+      just i ← pure (atomStoreIndex atom atoms')
         where nothing → typeError
                 ( strErr macroName
                 ∷ strErr ": internal: atom not found after insertion."
@@ -269,7 +276,7 @@ module _ (theory : TwoLevelTheory) where
 
       lhsE , st₁            ← parseGoal det fuel lhs ([] , [])
       rhsE , (ixs , atoms)  ← parseGoal det fuel rhs st₁
-      sigE , ixs'           ← sigEntriesOf det atoms ixs
+      sigE , ixs'           ← sigEntriesOf det (atomSpellings atoms) ixs
 
       let env = record { R↓ = weaken numPiVars `R
                        ; groupSizes = sortedGroupSizes ixs' }
