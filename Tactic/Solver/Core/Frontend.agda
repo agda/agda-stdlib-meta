@@ -129,8 +129,10 @@ Encoding = EncodeEnv → Term
 -- to the context of the parsed term (`solveEquation` weakens them
 -- past the goal's pi-prefix) — they are the one place detection
 -- compares whole Terms rather than head names.
-parseGoalTerm : DetectedTheory → Term → SortedAtomStore → TC (Encoding × SortedAtomStore)
-parseGoalTerm det = parse fuel
+-- The optional recogniser extends failed pure occurrences only.
+parseGoalTermWith : Maybe (Operator → Args Term → TC (Maybe Occurrence))
+                  → DetectedTheory → Term → SortedAtomStore → TC (Encoding × SortedAtomStore)
+parseGoalTermWith extraOccurrence det = parse fuel
   where
   open DetectedTheory det
 
@@ -156,6 +158,8 @@ parseGoalTerm det = parse fuel
                → (orig whnf : Term) → SortedAtomStore → TC (Encoding × SortedAtomStore)
   atomiseStore ref orig whnf acc = do
     key ← sortKeyOf orig
+    nothing ← pure (sortedStoreIndex key (orig , whnf) acc)
+      where (just (g , s)) → pure ((λ env → ref env g s) , acc)
     let acc' = insertSortedStore key (orig , whnf) acc
     -- see `Reflection.Utils.AtomStore` for why we do this
     just (g , s) ← pure (sortedStoreIndex key (orig , whnf) acc')
@@ -207,16 +211,24 @@ parseGoalTerm det = parse fuel
     parseHead : ℕ → (orig whnf : Term) → SortedAtomStore → TC (Encoding × SortedAtomStore)
     parseHead k orig t'@(def nm xs) acc = case findOperator operators nm of λ where
       nothing → tryConstant orig t' acc
-      (just o) → let open Operator o in case parseOcc xs of λ where
-        -- No parseable occurrence (e.g. fewer than `arity` operands in
-        -- the spine, possible when the carrier is a function type):
-        -- atomise the whole term.
-        nothing → atomise orig t' acc
-        (just occ) → do
-          es , acc' ← parseMany k (Occurrence.operands occ) acc
-          pure ((λ env → encode env occ (List.map (λ e → e env) es)) , acc')
+      (just o) → case Operator.parseOcc o xs of λ where
+        (just occ) → consume k o occ acc
+        nothing → case extraOccurrence of λ where
+          nothing → atomise orig t' acc
+          (just extra) → do
+            just occ ← extra o xs
+              where nothing → do
+                      -- An effectful recogniser may have solved metas.
+                      key ← whnfIfReducible orig
+                      atomise orig key acc
+            consume k o occ acc
 
     parseHead k orig t' acc = tryConstant orig t' acc
+
+    consume : ℕ → Operator → Occurrence → SortedAtomStore → TC (Encoding × SortedAtomStore)
+    consume k o occ acc = do
+      es , acc' ← parseMany k (Occurrence.operands occ) acc
+      pure ((λ env → Operator.encode o env occ (List.map (λ e → e env) es)) , acc')
 
     parseMany : ℕ → List Term → SortedAtomStore
               → TC (List Encoding × SortedAtomStore)
@@ -225,6 +237,9 @@ parseGoalTerm det = parse fuel
       e  , acc'  ← parse k t acc
       es , acc'' ← parseMany k ts acc'
       pure (e ∷ es , acc'')
+
+parseGoalTerm : DetectedTheory → Term → SortedAtomStore → TC (Encoding × SortedAtomStore)
+parseGoalTerm = parseGoalTermWith nothing
 
 ------------------------------------------------------------------------
 -- III. The generic macro core.

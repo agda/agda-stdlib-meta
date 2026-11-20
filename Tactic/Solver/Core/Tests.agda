@@ -42,7 +42,7 @@ private
   theory = record
     { macroName = "same-atom"
     ; indexTheory = indexTheory
-    ; prepIndex = pure
+    ; parseIndex = parseGoalTerm
     ; operators = []
     ; blockedNames = []
     ; atomRef = λ _ i → Fin.toTerm (fromℕ i)

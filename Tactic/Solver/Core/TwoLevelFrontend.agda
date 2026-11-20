@@ -23,9 +23,8 @@
 -- bundled iso needs a weak-head reduction of an argument before
 -- dispatch. For the same reason an occurrence carries its own
 -- encoder, so one head can dispatch to several encodings. Index
--- terms, whose theory keeps the pure `Operator` interface, get the
--- `prepIndex` hook instead. The driver `commitTC`s after its blocking
--- points; consumers must not commit earlier.
+-- parsing is supplied separately, allowing effectful occurrence
+-- recognition without rebuilding quoted terms.
 
 {-# OPTIONS --without-K --safe #-}
 
@@ -137,15 +136,10 @@ innerDef as = case takeLast 1 (vArgs as) of λ where
 record TwoLevelTheory : Set where
   field
     macroName    : String
-    -- The index level: an ordinary theory, parsed by `parseGoalTerm`.
+    -- Index constants are weakened before the parser is called.
     indexTheory  : DetectedTheory
-    -- TC pre-pass applied to every index term (goal-side and
-    -- signature-side) before the index theory parses it. The index
-    -- theory's `Operator.parseOcc` is pure, so an operator can never
-    -- look through a neutral argument; this hook is where such spellings
-    -- are reduced/rebuilt onto shapes the pure operators recognise.
-    -- `pure` if no preparation is needed.
-    prepIndex    : Term → TC Term
+    parseIndex   : DetectedTheory → Term → SortedAtomStore
+                 → TC (Encoding × SortedAtomStore)
     operators    : List TwoLevelOperator
     -- Must cover both levels' operator heads (the index theory's own
     -- `blockedNames` field is not consulted here).
@@ -191,8 +185,10 @@ module _ (theory : TwoLevelTheory) where
     atomiseT : Term → Stores → TC (Encoding × Stores)
     atomiseT orig (ixs , atoms) = do
       key ← whnfIfReducible orig
-      let atom   = (orig , key)
-          atoms' = insertAtomStore atom atoms
+      let atom = (orig , key)
+      nothing ← pure (atomStoreIndex atom atoms)
+        where (just i) → pure ((λ env → atomRef env i) , (ixs , atoms))
+      let atoms' = insertAtomStore atom atoms
       -- see `Reflection.Utils.AtomStore` for why insert and index
       -- stay separate traversals
       just i ← pure (atomStoreIndex atom atoms')
@@ -206,8 +202,7 @@ module _ (theory : TwoLevelTheory) where
                 → TC (List Encoding × SortedAtomStore)
     parseIxMany det []       acc = pure ([] , acc)
     parseIxMany det (t ∷ ts) acc = do
-      t' ← prepIndex t
-      e  , acc'  ← parseGoalTerm det t' acc
+      e  , acc'  ← parseIndex det t acc
       es , acc'' ← parseIxMany det ts acc'
       pure (e ∷ es , acc'')
 
