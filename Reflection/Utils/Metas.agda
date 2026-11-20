@@ -5,8 +5,9 @@ open import Meta.Prelude
 open import Meta.Init
 
 import Data.Bool.ListAction as B
-open import Data.List
 import Reflection.AST.Meta as Meta
+import Reflection.AST.Traversal as Traversal
+open import Effect.Applicative
 
 isMeta : Term → Bool
 isMeta = λ where
@@ -50,3 +51,12 @@ firstMeta = head ∘ findMetaIds
 
 shareMeta : List Meta → List Meta → Bool
 shareMeta xs ys = B.any (λ x → B.any (Meta._≡ᵇ_ x) ys) xs
+
+-- does the term have metas?
+metaFree : Term → Bool
+metaFree = traverseTerm (record defaultActions { onMeta = λ _ _ → false }) (0 , [])
+  where
+    allApplicative : RawApplicative (λ (_ : Set) → Bool)
+    allApplicative = mkRawApplicative _ (λ _ → true) _∧_
+
+    open Traversal allApplicative
