@@ -256,27 +256,27 @@ module _ (theory : TwoLevelTheory) where
       es  , ixs₂ ← sigEntriesOf det bs ixs₁
       pure ((λ env → encodeSig env b (applyEnv env ies)) ∷ es , ixs₂)
 
-    solveTwoLevelEquation : Term → ℕ → Term → TC Term
-    solveTwoLevelEquation `R numPiVars equation = do
-      lhs , rhs ← requireEquationSides equation
-      blockOnEquationMetas equation
-      commitTC
+  solveTwoLevelEquation : Term → ℕ → Term → TC Term
+  solveTwoLevelEquation `R numPiVars equation = do
+    lhs , rhs ← requireEquationSides equation
+    blockOnEquationMetas equation
+    commitTC
 
-      -- Constant patterns were resolved outside the pi-prefix; bring
-      -- them to the equation's context.
-      let det = record indexTheory
-            { constants = List.map
-                (λ c → record c { constTerm = weaken numPiVars (Constant.constTerm c) })
-                (DetectedTheory.constants indexTheory) }
+    -- Constant patterns were resolved outside the pi-prefix; bring
+    -- them to the equation's context.
+    let det = record indexTheory
+          { constants = List.map
+              (λ c → record c { constTerm = weaken numPiVars (Constant.constTerm c) })
+              (DetectedTheory.constants indexTheory) }
 
-      lhsE , st₁            ← parseGoal det fuel lhs ([] , [])
-      rhsE , (ixs , atoms)  ← parseGoal det fuel rhs st₁
-      sigE , ixs'           ← sigEntriesOf det (atomSpellings atoms) ixs
+    lhsE , st₁            ← parseGoal det fuel lhs ([] , [])
+    rhsE , (ixs , atoms)  ← parseGoal det fuel rhs st₁
+    sigE , ixs'           ← sigEntriesOf det (atomSpellings atoms) ixs
 
-      let env = record { R↓ = weaken numPiVars `R
-                       ; groupSizes = sortedGroupSizes ixs' }
-      pure (finishSolve env (lhsE env) (rhsE env)
-              (sortedSpellings ixs') (applyEnv env sigE))
+    let env = record { R↓ = weaken numPiVars `R
+                     ; groupSizes = sortedGroupSizes ixs' }
+    pure (finishSolve env (lhsE env) (rhsE env)
+            (sortedSpellings ixs') (applyEnv env sigE))
 
   -- Precondition: `R` has been type-checked against the structure's
   -- bundle type by the caller.
